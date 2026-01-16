@@ -1,0 +1,23 @@
+[base]
+db_path = "data/app.db"
+lock_path = "data/app.lock"
+codex_cli_cmd = "codex"
+codex_cli_args = []
+codex_cli_input_mode = "stdin"
+codex_cli_skip_git_check = true
+jsonl_sync_interval_seconds = 3
+message_chunk_limit = 3500
+
+[[bots]]
+name = "primary"
+token = "${ENV:TELEGRAM_BOT_TOKEN_PRIMARY}"
+allowed_user_ids = [123456789]
+resume_id = "${ENV:CODEX_CLI_RESUME_ID_PRIMARY}"
+codex_workdir = "${ENV:CODEX_WORKDIR_PRIMARY}"
+
+[[bots]]
+name = "backup"
+token = "${ENV:TELEGRAM_BOT_TOKEN_BACKUP}"
+allowed_user_ids = [123456789, 11223344]
+resume_id = "${ENV:CODEX_CLI_RESUME_ID_BACKUP}"
+codex_workdir = "${ENV:CODEX_WORKDIR_BACKUP}"
