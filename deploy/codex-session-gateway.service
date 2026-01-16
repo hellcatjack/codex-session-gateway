@@ -1,0 +1,20 @@
+[Unit]
+Description=Codex Session Gateway
+After=network.target
+
+[Service]
+Type=simple
+User=hellcat
+Group=hellcat
+WorkingDirectory=/app/codexTelegramShell
+EnvironmentFile=/app/codexTelegramShell/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/hellcat/.nvm/versions/node/v22.21.1/bin:/usr/local/bin:/usr/bin:/bin
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%U/bus
+ExecStart=/app/codexTelegramShell/.venv/bin/python -m src.main
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
