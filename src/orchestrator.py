@@ -34,11 +34,13 @@ class Orchestrator:
         session_manager: SessionManager,
         store: Store,
         runner: CodexRunner,
+        bot_id: str = "default",
     ) -> None:
         self._config = config
         self._session_manager = session_manager
         self._store = store
         self._runner = runner
+        self._bot_id = bot_id
         self._active_tasks: dict[int, asyncio.Task] = {}
         self._active_lock = asyncio.Lock()
         self._logger = logging.getLogger(__name__)
@@ -51,14 +53,14 @@ class Orchestrator:
         send_status: SendTextFunc,
         send_stream: StreamSendFunc,
     ) -> None:
-        session = await self._session_manager.get_or_create(user_id)
+        session = await self._session_manager.get_or_create(user_id, self._bot_id)
         self._store.record_message(session.session_id, "user", prompt)
 
         async with self._active_lock:
             active_task = self._active_tasks.get(user_id)
             if active_task and not active_task.done():
-                await self._session_manager.enqueue_prompt(user_id, prompt)
-                queued = await self._session_manager.peek_queue(user_id)
+                await self._session_manager.enqueue_prompt(user_id, prompt, self._bot_id)
+                queued = await self._session_manager.peek_queue(user_id, self._bot_id)
                 await send_status(
                     f"已收到新指令，当前任务结束后执行。排队中：{queued}"
                 )
@@ -69,7 +71,7 @@ class Orchestrator:
                 self._run_once(user_id, prompt, send_status, send_stream, resume_id)
             )
             self._active_tasks[user_id] = task
-            self._logger.info("启动任务 user_id=%s", user_id)
+            self._logger.info("启动任务 user_id=%s bot_id=%s", user_id, self._bot_id)
 
     async def cancel_run(self, user_id: int, send_status: SendTextFunc) -> None:
         async with self._active_lock:
@@ -82,26 +84,26 @@ class Orchestrator:
             self._logger.info("取消任务 user_id=%s", user_id)
 
     async def status(self, user_id: int, send_status: SendTextFunc) -> None:
-        session = await self._session_manager.get_or_create(user_id)
-        queued = await self._session_manager.peek_queue(user_id)
+        session = await self._session_manager.get_or_create(user_id, self._bot_id)
+        queued = await self._session_manager.peek_queue(user_id, self._bot_id)
         resume_text = session.resume_id or "未设置"
         await send_status(
             f"会话状态：{session.state.value}，排队指令：{queued}，resume_id：{resume_text}"
         )
 
     async def is_running(self, user_id: int) -> bool:
-        session = await self._session_manager.get_or_create(user_id)
+        session = await self._session_manager.get_or_create(user_id, self._bot_id)
         return session.state == SessionState.RUNNING
 
     async def get_resume_id(self, user_id: int) -> Optional[str]:
-        session = await self._session_manager.get_or_create(user_id)
+        session = await self._session_manager.get_or_create(user_id, self._bot_id)
         return session.resume_id or self._config.codex_cli_resume_id
 
     async def set_chat_id(self, user_id: int, chat_id: int) -> None:
-        await self._session_manager.set_chat_id(user_id, chat_id)
+        await self._session_manager.set_chat_id(user_id, chat_id, self._bot_id)
 
     def get_last_chat_id(self, user_id: int) -> Optional[int]:
-        return self._store.get_last_chat_id_by_user_id(user_id)
+        return self._store.get_last_chat_id_by_user_id(user_id, self._bot_id)
 
     def _extract_jsonl_message(
         self, data: dict
@@ -129,7 +131,7 @@ class Orchestrator:
         resume_id = await self.get_resume_id(user_id)
         if not resume_id:
             return []
-        session = await self._session_manager.get_or_create(user_id)
+        session = await self._session_manager.get_or_create(user_id, self._bot_id)
         last_result_hash = None
         if session.last_result:
             normalized = self._runner.normalize_text_for_dedupe(session.last_result)
@@ -137,8 +139,9 @@ class Orchestrator:
                 last_result_hash = hashlib.sha256(
                     normalized.encode("utf-8")
                 ).hexdigest()
-        last_ts, last_hash = self._store.get_jsonl_state_by_user_id(user_id)
-        state = self._jsonl_states.setdefault(resume_id, _JsonlSyncState())
+        last_ts, last_hash = self._store.get_jsonl_state_by_user_id(user_id, self._bot_id)
+        state_key = f"{self._bot_id}:{resume_id}"
+        state = self._jsonl_states.setdefault(state_key, _JsonlSyncState())
         path = self._runner.find_session_file(resume_id)
         if not path:
             return []
@@ -213,7 +216,7 @@ class Orchestrator:
                 continue
             if allow_send:
                 messages.append(text)
-                await self._session_manager.set_last_result(user_id, text)
+                await self._session_manager.set_last_result(user_id, text, self._bot_id)
             last_ts = max(last_ts or timestamp, timestamp)
             last_hash = digest
             updated = True
@@ -231,18 +234,18 @@ class Orchestrator:
         send_status: SendTextFunc,
         send_stream: StreamSendFunc,
     ) -> None:
-        session = await self._session_manager.get_or_create(user_id)
+        session = await self._session_manager.get_or_create(user_id, self._bot_id)
         result = session.last_result
         if not result:
-            result = self._store.get_last_result_by_user_id(user_id)
+            result = self._store.get_last_result_by_user_id(user_id, self._bot_id)
             if result:
-                await self._session_manager.set_last_result(user_id, result)
+                await self._session_manager.set_last_result(user_id, result, self._bot_id)
         if not result:
             resume_id = session.resume_id or self._config.codex_cli_resume_id
             if resume_id:
                 result = self._runner.read_last_assistant_message(resume_id)
                 if result:
-                    await self._session_manager.set_last_result(user_id, result)
+                    await self._session_manager.set_last_result(user_id, result, self._bot_id)
         if not result:
             await send_status("暂无可用结果。")
             return
@@ -274,11 +277,11 @@ class Orchestrator:
         send_stream: StreamSendFunc,
         resume_id: Optional[str],
     ) -> None:
-        session = await self._session_manager.set_state(user_id, SessionState.RUNNING)
+        session = await self._session_manager.set_state(user_id, SessionState.RUNNING, self._bot_id)
         run = Run(run_id=new_id("run"), session_id=session.session_id, prompt=prompt)
         self._store.record_run(run)
-        await self._session_manager.set_current_run(user_id, run.run_id)
-        self._logger.info("任务开始 run_id=%s user_id=%s", run.run_id, user_id)
+        await self._session_manager.set_current_run(user_id, run.run_id, self._bot_id)
+        self._logger.info("任务开始 run_id=%s user_id=%s bot_id=%s", run.run_id, user_id, self._bot_id)
 
         await send_status("已开始执行。")
         broker = StreamBroker(
@@ -329,11 +332,11 @@ class Orchestrator:
             await broker.stop()
             self._store.update_run(run.run_id, run.status, run.finished_at, run.error)
             if final_message:
-                await self._session_manager.set_last_result(user_id, final_message)
-            await self._session_manager.set_current_run(user_id, None)
-            await self._session_manager.set_state(user_id, SessionState.IDLE)
+                await self._session_manager.set_last_result(user_id, final_message, self._bot_id)
+            await self._session_manager.set_current_run(user_id, None, self._bot_id)
+            await self._session_manager.set_state(user_id, SessionState.IDLE, self._bot_id)
             self._logger.info(
-                "任务结束 run_id=%s status=%s", run.run_id, run.status.value
+                "任务结束 run_id=%s status=%s bot_id=%s", run.run_id, run.status.value, self._bot_id
             )
             await send_status(self._format_run_summary(run))
             await self._post_run_cleanup(user_id, send_status, send_stream)
@@ -347,7 +350,7 @@ class Orchestrator:
         async with self._active_lock:
             self._active_tasks.pop(user_id, None)
 
-        queued_prompt = await self._session_manager.dequeue_prompt(user_id)
+        queued_prompt = await self._session_manager.dequeue_prompt(user_id, self._bot_id)
         if queued_prompt:
             await self.submit_prompt(user_id, queued_prompt, send_status, send_stream)
         else:

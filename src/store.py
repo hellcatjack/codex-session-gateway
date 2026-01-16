@@ -36,6 +36,7 @@ class Store:
                 CREATE TABLE IF NOT EXISTS sessions (
                     session_id TEXT PRIMARY KEY,
                     user_id INTEGER NOT NULL,
+                    bot_id TEXT,
                     state TEXT NOT NULL,
                     resume_id TEXT,
                     last_result TEXT,
@@ -76,6 +77,8 @@ class Store:
             self._ensure_column("sessions", "jsonl_last_ts", "REAL")
             self._ensure_column("sessions", "jsonl_last_hash", "TEXT")
             self._ensure_column("sessions", "last_chat_id", "INTEGER")
+            self._ensure_column("sessions", "bot_id", "TEXT")
+            cur.execute("UPDATE sessions SET bot_id = ? WHERE bot_id IS NULL", ("default",))
             self._conn.commit()
 
     def record_session(self, session: Session) -> None:
@@ -84,12 +87,13 @@ class Store:
             cur.execute(
                 """
                 INSERT OR REPLACE INTO sessions
-                (session_id, user_id, state, resume_id, last_result, jsonl_last_ts, jsonl_last_hash, last_chat_id, created_at, last_activity)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (session_id, user_id, bot_id, state, resume_id, last_result, jsonl_last_ts, jsonl_last_hash, last_chat_id, created_at, last_activity)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session.session_id,
                     session.user_id,
+                    session.bot_id,
                     session.state.value,
                     session.resume_id,
                     session.last_result,
@@ -131,18 +135,18 @@ class Store:
             )
             self._conn.commit()
 
-    def get_last_result_by_user_id(self, user_id: int) -> Optional[str]:
+    def get_last_result_by_user_id(self, user_id: int, bot_id: str = "default") -> Optional[str]:
         with self._lock:
             cur = self._conn.cursor()
             cur.execute(
                 """
                 SELECT last_result
                 FROM sessions
-                WHERE user_id = ? AND last_result IS NOT NULL
+                WHERE user_id = ? AND (bot_id = ? OR bot_id IS NULL) AND last_result IS NOT NULL
                 ORDER BY last_activity DESC
                 LIMIT 1
                 """,
-                (user_id,),
+                (user_id, bot_id),
             )
             row = cur.fetchone()
         return row[0] if row else None
@@ -163,7 +167,7 @@ class Store:
             self._conn.commit()
 
     def get_jsonl_state_by_user_id(
-        self, user_id: int
+        self, user_id: int, bot_id: str = "default"
     ) -> tuple[Optional[float], Optional[str]]:
         with self._lock:
             cur = self._conn.cursor()
@@ -171,11 +175,11 @@ class Store:
                 """
                 SELECT jsonl_last_ts, jsonl_last_hash
                 FROM sessions
-                WHERE user_id = ?
+                WHERE user_id = ? AND (bot_id = ? OR bot_id IS NULL)
                 ORDER BY last_activity DESC
                 LIMIT 1
                 """,
-                (user_id,),
+                (user_id, bot_id),
             )
             row = cur.fetchone()
         if not row:
@@ -195,18 +199,18 @@ class Store:
             )
             self._conn.commit()
 
-    def get_last_chat_id_by_user_id(self, user_id: int) -> Optional[int]:
+    def get_last_chat_id_by_user_id(self, user_id: int, bot_id: str = "default") -> Optional[int]:
         with self._lock:
             cur = self._conn.cursor()
             cur.execute(
                 """
                 SELECT last_chat_id
                 FROM sessions
-                WHERE user_id = ? AND last_chat_id IS NOT NULL
+                WHERE user_id = ? AND (bot_id = ? OR bot_id IS NULL) AND last_chat_id IS NOT NULL
                 ORDER BY last_activity DESC
                 LIMIT 1
                 """,
-                (user_id,),
+                (user_id, bot_id),
             )
             row = cur.fetchone()
         return row[0] if row else None
