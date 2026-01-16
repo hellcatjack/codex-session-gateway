@@ -1,6 +1,6 @@
-# Codex Telegram Shell
+# Codex Session Gateway
 
-用于在内网单机环境中，通过 Telegram Bot 与本地 Codex CLI 实时交互的 Python 服务。
+用于在内网单机环境中，通过 Telegram Bot 绑定指定 Session ID，与本地 Codex CLI 实时交互的 Python 服务。
 
 ## 功能
 - Telegram 实时对话与流式输出
@@ -85,20 +85,20 @@ python -m src.main
 ```
 
 ## systemd 服务
-项目内提供服务文件模板：`deploy/codex-telegram-shell.service`。请按实际路径修改后安装（已默认使用 `.venv` 里的 Python）。
+项目内提供服务文件模板：`deploy/codex-session-gateway.service`。请按实际路径修改后安装（已默认使用 `.venv` 里的 Python）。
 如需在 Codex 指令中调用 `systemctl --user`，请确保用户 DBus 可用（服务模板已设置 `XDG_RUNTIME_DIR` 与 `DBUS_SESSION_BUS_ADDRESS`）。
 若仍提示 `Failed to connect to bus: No medium found`，请启用用户常驻：`loginctl enable-linger <用户>`。
 
 安装示例：
 ```bash
-sudo cp deploy/codex-telegram-shell.service /etc/systemd/system/codex-telegram-shell.service
+sudo cp deploy/codex-session-gateway.service /etc/systemd/system/codex-session-gateway.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now codex-telegram-shell
+sudo systemctl enable --now codex-session-gateway
 ```
 
 查看日志：
 ```bash
-sudo journalctl -u codex-telegram-shell -f
+sudo journalctl -u codex-session-gateway -f
 ```
 
 ## 可用指令
