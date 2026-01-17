@@ -12,15 +12,20 @@
 - Python 3.11+
 - 本地可执行的 Codex CLI
 
-## 说明
+## 运行说明
 - 为避免 `The cursor position could not be read within a normal duration`，运行 Codex CLI 时默认设置 `PROMPT_TOOLKIT_NO_CPR=1` 与 `TERM=xterm-256color`。
 - 当设置 `CODEX_CLI_RESUME_ID` 时，默认使用 `codex exec resume <id>`（非交互模式）以保证 Telegram 场景可稳定输出。
 
-## 安装依赖
+## 快速开始
 ```bash
 python -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
+```
+
+准备配置后启动：
+```bash
+python -m src.main
 ```
 
 ## 配置
@@ -66,7 +71,7 @@ codex_workdir = "${ENV:CODEX_WORKDIR_BACKUP}"
 
 其余基础设置可参考 `.env.example`（与 `base` 字段一致）。
 
-基础设置字段说明（`base` 或 `.env` 通用）：
+### 基础设置字段说明（`base` 或 `.env` 通用）
 - `CODEX_CLI_CMD`：Codex CLI 命令（默认 `codex`）
 - `CODEX_CLI_ARGS`：Codex CLI 额外参数（可选）
 - `CODEX_CLI_INPUT_MODE`：`stdin` 或 `arg`（默认 `stdin`）
@@ -88,17 +93,18 @@ codex_workdir = "${ENV:CODEX_WORKDIR_BACKUP}"
 - `CODEX_JSONL_REASONING_MODE`：推理事件展示模式，`hidden`（仅占位提示）或 `summary`（安全摘要，默认 `hidden`）
 - `MESSAGE_CHUNK_LIMIT`：单条消息最大长度（默认 `3500`，实际会被限制在 4096 以内，并自动拆分）
 
-## 安全与审计
-- 安全与敏感信息规范：`docs/security.md`
-- 最近一次审计报告：`docs/audits/2026-01-16-security-audit.md`
-
-## 启动
-```bash
-python -m src.main
-```
+## Telegram 指令
+- `/new <内容>`：提交新指令
+- `/session`：查看会话绑定（只读）
+- `/stop`：停止当前任务
+- `/status`：查看状态
+- `/retry`：重试上一次指令
+- `/lastresult`：查看最近一次结果
+- `/whoami`：查看用户与聊天 ID
+- `/help`：查看帮助
 
 ## systemd 服务
-项目内提供服务文件模板：`deploy/codex-session-gateway.service`。请按实际路径修改后安装（已默认使用 `.venv` 里的 Python）。
+项目内提供服务文件模板：`deploy/codex-session-gateway.service`。请按实际路径修改后安装（默认使用 `.venv` 里的 Python）。
 如需在 Codex 指令中调用 `systemctl --user`，请确保用户 DBus 可用（服务模板已设置 `XDG_RUNTIME_DIR` 与 `DBUS_SESSION_BUS_ADDRESS`）。
 若仍提示 `Failed to connect to bus: No medium found`，请启用用户常驻：`loginctl enable-linger <用户>`。
 
@@ -126,15 +132,13 @@ sudo journalctl -u codex-session-gateway -f
 - 若需让 Codex CLI 在非交互环境下自动执行审批相关操作：  
   处理：在 `.env` 或 `config.toml` 的 `base.codex_cli_args` 中配置 `--dangerously-bypass-approvals-and-sandbox`（请谨慎使用）。
 
-## 可用指令
-- `/new <内容>`：提交新指令
-- `/session`：查看会话绑定（只读）
-- `/stop`：停止当前任务
-- `/status`：查看状态
-- `/retry`：重试上一次指令
-- `/lastresult`：查看最近一次结果
-- `/whoami`：查看用户与聊天 ID
-- `/help`：查看帮助
+## 安全与审计
+- 安全与敏感信息规范：`docs/security.md`
+- 最近一次审计报告：`docs/audits/2026-01-16-security-audit.md`
+
+## 文档索引
+- 全量索引：`docs/INDEX.md`
+- 规划与历史记录：`docs/plans/`
 
 ## 测试
 ```bash
