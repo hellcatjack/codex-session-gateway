@@ -24,18 +24,55 @@ pip install -r requirements.txt
 ```
 
 ## 配置
-请在项目根目录创建 `.env`，系统会自动读取。
+系统会优先读取 `config.toml`；不存在时回退到 `.env`（单 bot 兼容）。
 
-- `TELEGRAM_BOT_TOKEN`：Telegram Bot Token（必填）
-- `TELEGRAM_ALLOWED_USER_IDS`：允许用户的 Telegram ID，逗号分隔（必填）
+### config.toml（推荐，多 bot）
+- `base`：基础设置（全局共享）
+- `bots`：每个 bot 一条记录，必须包含 `name / token / allowed_user_ids / resume_id / codex_workdir`
+- 支持 `${ENV:KEY}` 占位符，便于把敏感信息放到 `.env`
+
+示例（可参考 `config.toml.example`）：
+
+```toml
+[base]
+db_path = "data/app.db"
+lock_path = "data/app.lock"
+codex_cli_cmd = "codex"
+codex_cli_input_mode = "stdin"
+jsonl_sync_interval_seconds = 3
+message_chunk_limit = 3500
+
+[[bots]]
+name = "primary"
+token = "${ENV:TELEGRAM_BOT_TOKEN_PRIMARY}"
+allowed_user_ids = [123456789]
+resume_id = "${ENV:CODEX_CLI_RESUME_ID_PRIMARY}"
+codex_workdir = "${ENV:CODEX_WORKDIR_PRIMARY}"
+
+[[bots]]
+name = "backup"
+token = "${ENV:TELEGRAM_BOT_TOKEN_BACKUP}"
+allowed_user_ids = [123456789, 11223344]
+resume_id = "${ENV:CODEX_CLI_RESUME_ID_BACKUP}"
+codex_workdir = "${ENV:CODEX_WORKDIR_BACKUP}"
+```
+
+### .env（兼容单 bot）
+至少需要配置：
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_ALLOWED_USER_IDS`
+- `CODEX_CLI_RESUME_ID`
+- `CODEX_WORKDIR`
+
+其余基础设置可参考 `.env.example`（与 `base` 字段一致）。
+
+基础设置字段说明（`base` 或 `.env` 通用）：
 - `CODEX_CLI_CMD`：Codex CLI 命令（默认 `codex`）
 - `CODEX_CLI_ARGS`：Codex CLI 额外参数（可选）
 - `CODEX_CLI_INPUT_MODE`：`stdin` 或 `arg`（默认 `stdin`）
-- `CODEX_CLI_RESUME_ID`：Codex 会话 ID（可选，用于 `codex resume <id>`）
 - `CODEX_CLI_APPROVALS_MODE`：审批模式（默认 `3`，等价于输入 `/approvals 3`）
 - `CODEX_CLI_SKIP_GIT_CHECK`：是否跳过 Git 仓库检查（`1/0`，默认 `1`，用于 `codex exec`）
 - `CODEX_CLI_USE_PTY`：是否使用伪终端（`1/0`，默认 `0`，用于解决 `stdin is not a terminal`）
-- `CODEX_WORKDIR`：Codex CLI 工作目录（默认当前目录）
 - `DB_PATH`：SQLite 路径（默认 `data/app.db`）
 - `LOCK_PATH`：进程锁文件路径（默认 `data/app.lock`，用于防止多重启动）
 - `STREAM_FLUSH_INTERVAL`：输出节流间隔秒数（默认 `1.5`）
@@ -50,30 +87,6 @@ pip install -r requirements.txt
 - `CODEX_JSONL_REASONING_THROTTLE_SECONDS`：推送 `agent_reasoning` 占位提示的最小间隔秒数（默认 `10`）
 - `CODEX_JSONL_REASONING_MODE`：推理事件展示模式，`hidden`（仅占位提示）或 `summary`（安全摘要，默认 `hidden`）
 - `MESSAGE_CHUNK_LIMIT`：单条消息最大长度（默认 `3500`，实际会被限制在 4096 以内，并自动拆分）
-
-示例 `.env`（可参考 `.env.example`）：
-
-```
-TELEGRAM_BOT_TOKEN=你的Token
-TELEGRAM_ALLOWED_USER_IDS=123456789
-CODEX_CLI_CMD=codex
-CODEX_CLI_ARGS=
-CODEX_CLI_INPUT_MODE=stdin
-CODEX_WORKDIR=.
-DB_PATH=data/app.db
-LOCK_PATH=data/app.lock
-STREAM_FLUSH_INTERVAL=1.5
-PROGRESS_TICK_INTERVAL=15
-RUN_TIMEOUT_SECONDS=900
-CONTEXT_COMPACTION_IDLE_TIMEOUT_SECONDS=60
-NO_OUTPUT_IDLE_TIMEOUT_SECONDS=900
-FINAL_RESULT_IDLE_TIMEOUT_SECONDS=30
-JSONL_SYNC_INTERVAL_SECONDS=3
-CODEX_JSONL_STREAM_EVENTS=1
-CODEX_JSONL_REASONING_THROTTLE_SECONDS=10
-CODEX_JSONL_REASONING_MODE=summary
-MESSAGE_CHUNK_LIMIT=3500
-```
 
 ## 安全与审计
 - 安全与敏感信息规范：`docs/security.md`

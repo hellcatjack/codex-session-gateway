@@ -29,6 +29,7 @@ def new_id(prefix: str) -> str:
 @dataclass
 class Session:
     user_id: int
+    bot_id: str = "default"
     session_id: str = field(default_factory=lambda: new_id("sess"))
     state: SessionState = SessionState.IDLE
     current_run_id: Optional[str] = None

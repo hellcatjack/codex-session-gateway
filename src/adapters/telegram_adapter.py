@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import logging
-from dataclasses import dataclass, field
 import hashlib
+import logging
 import time
+from dataclasses import dataclass, field
 from typing import Optional
 
 from telegram import Update
@@ -90,9 +90,10 @@ class TelegramStreamSender:
 
 
 class TelegramAdapter:
-    def __init__(self, config: Config, orchestrator: Orchestrator) -> None:
+    def __init__(self, config: Config, orchestrator: Orchestrator, bot_id: str = "default") -> None:
         self._config = config
         self._orchestrator = orchestrator
+        self._bot_id = bot_id
         self._user_context: dict[int, _UserContext] = {}
         self._logger = logging.getLogger(__name__)
 
@@ -127,7 +128,6 @@ class TelegramAdapter:
             ctx.dedupe_hashes.pop(key, None)
         if len(ctx.dedupe_hashes) <= _DEDUP_MAX_ENTRIES:
             return
-        # Drop oldest entries when over limit
         for key, _ in sorted(ctx.dedupe_hashes.items(), key=lambda item: item[1])[: len(ctx.dedupe_hashes) - _DEDUP_MAX_ENTRIES]:
             ctx.dedupe_hashes.pop(key, None)
 
@@ -149,6 +149,10 @@ class TelegramAdapter:
         ctx.dedupe_hashes[digest] = time.time()
 
     def run(self) -> None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.set_event_loop(asyncio.new_event_loop())
         application = ApplicationBuilder().token(self._config.telegram_bot_token).build()
         application.post_init = self._post_init
         application.add_handler(CommandHandler("help", self._handle_help))
@@ -162,7 +166,7 @@ class TelegramAdapter:
         application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_text)
         )
-        self._logger.info("Telegram 适配器启动，进入 polling")
+        self._logger.info("Telegram 适配器启动，进入 polling bot_id=%s", self._bot_id)
         application.run_polling(close_loop=False)
 
     async def _post_init(self, application: Application) -> None:
@@ -297,7 +301,7 @@ class TelegramAdapter:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, prompt: str
     ) -> None:
         user_id = update.effective_user.id
-        self._logger.info("收到消息 user_id=%s", user_id)
+        self._logger.info("收到消息 user_id=%s bot_id=%s", user_id, self._bot_id)
         user_ctx = self._reset_dedupe(user_id)
         user_ctx.last_prompt = prompt
         sender = TelegramStreamSender(
@@ -367,7 +371,7 @@ class TelegramAdapter:
             )
             for message in messages:
                 if not self._should_send(user_ctx, message):
-                    self._logger.info("JSONL 去重：跳过重复结果 user_id=%s", user_id)
+                    self._logger.info("JSONL 去重：跳过重复结果 user_id=%s bot_id=%s", user_id, self._bot_id)
                     continue
                 await sender.send(message, True)
 

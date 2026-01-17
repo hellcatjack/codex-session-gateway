@@ -9,59 +9,59 @@ from .store import Store
 class SessionManager:
     def __init__(self, store: Store) -> None:
         self._store = store
-        self._sessions: dict[int, Session] = {}
+        self._sessions: dict[tuple[str, int], Session] = {}
         self._lock = asyncio.Lock()
 
-    def _get_or_create_locked(self, user_id: int) -> Session:
-        session = self._sessions.get(user_id)
+    def _get_or_create_locked(self, bot_id: str, user_id: int) -> Session:
+        session = self._sessions.get((bot_id, user_id))
         if session is None:
-            session = Session(user_id=user_id)
-            self._sessions[user_id] = session
+            session = Session(user_id=user_id, bot_id=bot_id)
+            self._sessions[(bot_id, user_id)] = session
             self._store.record_session(session)
         return session
 
-    async def get_or_create(self, user_id: int) -> Session:
+    async def get_or_create(self, user_id: int, bot_id: str = "default") -> Session:
         async with self._lock:
-            session = self._get_or_create_locked(user_id)
+            session = self._get_or_create_locked(bot_id, user_id)
             session.last_activity = time.time()
             return session
 
-    async def set_state(self, user_id: int, state: SessionState) -> Session:
+    async def set_state(self, user_id: int, state: SessionState, bot_id: str = "default") -> Session:
         async with self._lock:
-            session = self._get_or_create_locked(user_id)
+            session = self._get_or_create_locked(bot_id, user_id)
             session.state = state
             session.last_activity = time.time()
             self._store.update_session_state(session.session_id, state)
             return session
 
-    async def set_current_run(self, user_id: int, run_id: Optional[str]) -> Session:
+    async def set_current_run(self, user_id: int, run_id: Optional[str], bot_id: str = "default") -> Session:
         async with self._lock:
-            session = self._get_or_create_locked(user_id)
+            session = self._get_or_create_locked(bot_id, user_id)
             session.current_run_id = run_id
             session.last_activity = time.time()
             return session
 
-    async def set_resume_id(self, user_id: int, resume_id: Optional[str]) -> Session:
+    async def set_resume_id(self, user_id: int, resume_id: Optional[str], bot_id: str = "default") -> Session:
         async with self._lock:
-            session = self._get_or_create_locked(user_id)
+            session = self._get_or_create_locked(bot_id, user_id)
             session.resume_id = resume_id
             session.last_activity = time.time()
             self._store.update_session_resume_id(session.session_id, resume_id)
             return session
 
-    async def set_last_result(self, user_id: int, last_result: Optional[str]) -> Session:
+    async def set_last_result(self, user_id: int, last_result: Optional[str], bot_id: str = "default") -> Session:
         async with self._lock:
-            session = self._get_or_create_locked(user_id)
+            session = self._get_or_create_locked(bot_id, user_id)
             session.last_result = last_result
             session.last_activity = time.time()
             self._store.update_session_last_result(session.session_id, last_result)
             return session
 
     async def set_jsonl_state(
-        self, user_id: int, last_ts: Optional[float], last_hash: Optional[str]
+        self, user_id: int, last_ts: Optional[float], last_hash: Optional[str], bot_id: str = "default"
     ) -> Session:
         async with self._lock:
-            session = self._get_or_create_locked(user_id)
+            session = self._get_or_create_locked(bot_id, user_id)
             session.jsonl_last_ts = last_ts
             session.jsonl_last_hash = last_hash
             session.last_activity = time.time()
@@ -70,9 +70,9 @@ class SessionManager:
             )
             return session
 
-    async def set_chat_id(self, user_id: int, chat_id: int) -> Session:
+    async def set_chat_id(self, user_id: int, chat_id: int, bot_id: str = "default") -> Session:
         async with self._lock:
-            session = self._get_or_create_locked(user_id)
+            session = self._get_or_create_locked(bot_id, user_id)
             session.last_chat_id = chat_id
             session.last_activity = time.time()
             self._store.update_session_chat_id(session.session_id, chat_id)
@@ -83,22 +83,22 @@ class SessionManager:
                 )
             return session
 
-    async def enqueue_prompt(self, user_id: int, prompt: str) -> Session:
+    async def enqueue_prompt(self, user_id: int, prompt: str, bot_id: str = "default") -> Session:
         async with self._lock:
-            session = self._get_or_create_locked(user_id)
+            session = self._get_or_create_locked(bot_id, user_id)
             session.queue.append(prompt)
             session.last_activity = time.time()
             return session
 
-    async def dequeue_prompt(self, user_id: int) -> Optional[str]:
+    async def dequeue_prompt(self, user_id: int, bot_id: str = "default") -> Optional[str]:
         async with self._lock:
-            session = self._get_or_create_locked(user_id)
+            session = self._get_or_create_locked(bot_id, user_id)
             if not session.queue:
                 return None
             session.last_activity = time.time()
             return session.queue.popleft()
 
-    async def peek_queue(self, user_id: int) -> int:
+    async def peek_queue(self, user_id: int, bot_id: str = "default") -> int:
         async with self._lock:
-            session = self._get_or_create_locked(user_id)
+            session = self._get_or_create_locked(bot_id, user_id)
             return len(session.queue)
