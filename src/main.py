@@ -28,10 +28,10 @@ def main() -> None:
     store = Store(db_path)
     store.init()
 
-    session_manager = SessionManager(store)
     threads: list[threading.Thread] = []
     for bot in app_config.bots:
         runtime_config = build_runtime_config(app_config.base, bot)
+        session_manager = SessionManager(store)
         runner = CodexRunner(runtime_config)
         orchestrator = Orchestrator(
             runtime_config, session_manager, store, runner, bot_id=bot.name
