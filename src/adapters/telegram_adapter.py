@@ -375,11 +375,19 @@ class TelegramAdapter:
             progress_texts = [extract_text(msg) for msg in progress_messages]
             final_texts = [extract_text(msg) for msg in final_messages]
             if running and progress_texts:
-                sender = TelegramStreamSender(
-                    context.bot, user_ctx.chat_id, self._config.message_chunk_limit
-                )
-                for message in progress_texts:
-                    await sender.send(message, True)
+                if not self._config.jsonl_stream_events:
+                    sender = TelegramStreamSender(
+                        context.bot, user_ctx.chat_id, self._config.message_chunk_limit
+                    )
+                    for message in progress_texts:
+                        if not self._should_send(user_ctx, message):
+                            self._logger.info(
+                                "JSONL 去重：跳过重复进度 user_id=%s bot_id=%s",
+                                user_id,
+                                self._bot_id,
+                            )
+                            continue
+                        await sender.send(message, True)
             if running:
                 if final_texts:
                     user_ctx.pending_jsonl.extend(final_texts)
