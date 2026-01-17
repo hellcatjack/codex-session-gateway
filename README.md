@@ -52,7 +52,7 @@ codex_workdir = "${ENV:CODEX_WORKDIR_PRIMARY}"
 [[bots]]
 name = "backup"
 token = "${ENV:TELEGRAM_BOT_TOKEN_BACKUP}"
-allowed_user_ids = [123456789, 11223344]
+allowed_user_ids = [123456789, 987654321]
 resume_id = "${ENV:CODEX_CLI_RESUME_ID_BACKUP}"
 codex_workdir = "${ENV:CODEX_WORKDIR_BACKUP}"
 ```
