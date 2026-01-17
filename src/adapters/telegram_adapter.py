@@ -167,7 +167,7 @@ class TelegramAdapter:
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_text)
         )
         self._logger.info("Telegram 适配器启动，进入 polling bot_id=%s", self._bot_id)
-        application.run_polling(close_loop=False)
+        application.run_polling(close_loop=False, stop_signals=None)
 
     async def _post_init(self, application: Application) -> None:
         if self._config.jsonl_sync_interval_seconds <= 0:
