@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import hashlib
+import time
 from typing import Optional
 
 from telegram import Update
@@ -18,16 +20,21 @@ from telegram.ext import (
 
 from ..commands import CommandType, parse_command
 from ..config import Config
+from ..codex_runner import CodexRunner
 from ..orchestrator import Orchestrator
 
 
 TELEGRAM_MESSAGE_LIMIT = 4096
+_DEDUP_TTL_SECONDS = 3600
+_DEDUP_MAX_ENTRIES = 256
 
 
 @dataclass
 class _UserContext:
     last_prompt: Optional[str] = None
     chat_id: Optional[int] = None
+    stream_buffer: str = ""
+    dedupe_hashes: dict[str, float] = field(default_factory=dict)
 
 
 class TelegramStreamSender:
@@ -88,6 +95,58 @@ class TelegramAdapter:
         self._orchestrator = orchestrator
         self._user_context: dict[int, _UserContext] = {}
         self._logger = logging.getLogger(__name__)
+
+    def _hash_text(self, text: str) -> str | None:
+        if not text:
+            return None
+        normalized = CodexRunner.normalize_text_for_dedupe(text)
+        if not normalized:
+            return None
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    def _reset_dedupe(self, user_id: int) -> _UserContext:
+        ctx = self._user_context.setdefault(user_id, _UserContext())
+        ctx.stream_buffer = ""
+        ctx.dedupe_hashes.clear()
+        return ctx
+
+    def _append_stream_buffer(self, ctx: _UserContext, text: str) -> None:
+        if not text:
+            return
+        if ctx.stream_buffer:
+            ctx.stream_buffer = f"{ctx.stream_buffer}\n{text}"
+        else:
+            ctx.stream_buffer = text
+
+    def _prune_dedupe(self, ctx: _UserContext) -> None:
+        if not ctx.dedupe_hashes:
+            return
+        now = time.time()
+        expired = [key for key, ts in ctx.dedupe_hashes.items() if now - ts > _DEDUP_TTL_SECONDS]
+        for key in expired:
+            ctx.dedupe_hashes.pop(key, None)
+        if len(ctx.dedupe_hashes) <= _DEDUP_MAX_ENTRIES:
+            return
+        # Drop oldest entries when over limit
+        for key, _ in sorted(ctx.dedupe_hashes.items(), key=lambda item: item[1])[: len(ctx.dedupe_hashes) - _DEDUP_MAX_ENTRIES]:
+            ctx.dedupe_hashes.pop(key, None)
+
+    def _should_send(self, ctx: _UserContext, text: str) -> bool:
+        digest = self._hash_text(text)
+        if digest is None:
+            return True
+        self._prune_dedupe(ctx)
+        if digest in ctx.dedupe_hashes:
+            return False
+        ctx.dedupe_hashes[digest] = time.time()
+        return True
+
+    def _record_stream_digest(self, ctx: _UserContext) -> None:
+        digest = self._hash_text(ctx.stream_buffer)
+        if digest is None:
+            return
+        self._prune_dedupe(ctx)
+        ctx.dedupe_hashes[digest] = time.time()
 
     def run(self) -> None:
         application = ApplicationBuilder().token(self._config.telegram_bot_token).build()
@@ -239,15 +298,23 @@ class TelegramAdapter:
     ) -> None:
         user_id = update.effective_user.id
         self._logger.info("收到消息 user_id=%s", user_id)
-        self._user_context.setdefault(user_id, _UserContext()).last_prompt = prompt
+        user_ctx = self._reset_dedupe(user_id)
+        user_ctx.last_prompt = prompt
         sender = TelegramStreamSender(
             context.bot, update.effective_chat.id, self._config.message_chunk_limit
         )
+        async def send_stream(text: str, final: bool) -> None:
+            if text:
+                self._append_stream_buffer(user_ctx, text)
+            await sender.send(text, final)
+            if final:
+                self._record_stream_digest(user_ctx)
+
         await self._orchestrator.submit_prompt(
             user_id,
             prompt,
             lambda msg: context.bot.send_message(chat_id=update.effective_chat.id, text=msg),
-            sender.send,
+            send_stream,
         )
 
     async def _authorized(
@@ -299,6 +366,9 @@ class TelegramAdapter:
                 context.bot, user_ctx.chat_id, self._config.message_chunk_limit
             )
             for message in messages:
+                if not self._should_send(user_ctx, message):
+                    self._logger.info("JSONL 去重：跳过重复结果 user_id=%s", user_id)
+                    continue
                 await sender.send(message, True)
 
     async def _sync_jsonl_loop(self, application: Application) -> None:
