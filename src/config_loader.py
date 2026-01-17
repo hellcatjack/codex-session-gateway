@@ -109,7 +109,14 @@ def _build_base_config(env: Mapping[str, str], base_data: Mapping[str, Any]) -> 
     )
     lock_path = _resolve_value(lock_path, env)
 
-    codex_cli_args_value = base_data.get("codex_cli_args", env.get("CODEX_CLI_ARGS", ""))
+    if "codex_cli_args" in base_data:
+        codex_cli_args_value = base_data.get("codex_cli_args")
+        if isinstance(codex_cli_args_value, list) and not codex_cli_args_value:
+            codex_cli_args_value = env.get("CODEX_CLI_ARGS", "")
+        elif isinstance(codex_cli_args_value, str) and not codex_cli_args_value.strip():
+            codex_cli_args_value = env.get("CODEX_CLI_ARGS", "")
+    else:
+        codex_cli_args_value = env.get("CODEX_CLI_ARGS", "")
     codex_cli_args_value = _resolve_value(codex_cli_args_value, env)
     if isinstance(codex_cli_args_value, list):
         codex_cli_args = [str(item) for item in codex_cli_args_value]
@@ -201,6 +208,13 @@ def load_toml_config(path: str, env: Mapping[str, str] | None = None) -> ConfigL
             continue
 
         codex_cli_args_raw = raw_bot.get("codex_cli_args")
+        if codex_cli_args_raw is None:
+            codex_cli_args = None
+        else:
+            if isinstance(codex_cli_args_raw, list) and not codex_cli_args_raw:
+                codex_cli_args_raw = None
+            elif isinstance(codex_cli_args_raw, str) and not codex_cli_args_raw.strip():
+                codex_cli_args_raw = None
         if codex_cli_args_raw is None:
             codex_cli_args = None
         else:

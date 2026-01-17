@@ -49,3 +49,27 @@ def test_missing_required_fields(tmp_path):
     result = load_toml_config(str(path), {})
     assert result.errors
     assert not result.app_config.bots
+
+def test_base_codex_cli_args_empty_falls_back_to_env(tmp_path):
+    toml = """
+    [base]
+    codex_cli_args = []
+
+    [[bots]]
+    name = "bot-alpha"
+    token = "token"
+    allowed_user_ids = [1]
+    resume_id = "resume-1"
+    codex_workdir = "/tmp"
+    """
+    path = tmp_path / "config.toml"
+    path.write_text(toml, encoding="utf-8")
+
+    result = load_toml_config(
+        str(path),
+        {"CODEX_CLI_ARGS": "--dangerously-bypass-approvals-and-sandbox"},
+    )
+    assert result.errors == []
+    assert result.app_config.base.codex_cli_args == [
+        "--dangerously-bypass-approvals-and-sandbox"
+    ]
