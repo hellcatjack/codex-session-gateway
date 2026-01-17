@@ -114,6 +114,18 @@ sudo systemctl enable --now codex-session-gateway
 sudo journalctl -u codex-session-gateway -f
 ```
 
+## 授权与联网限制（容器/沙箱）
+在受限环境中可能出现“有权限但无法联网/无法重启”的情况，常见表现与处理建议如下：
+
+- `sudo: The "no new privileges" flag is set`：容器启用了 `no-new-privileges`，即使允许提权也无法执行 `sudo`/`systemctl`。  
+  处理：在宿主机执行重启命令，或调整容器配置关闭该标志；必要时改用用户级服务。
+- `Failed to connect to bus: No medium found`：用户级 DBus 不可用。  
+  处理：启用用户常驻 `loginctl enable-linger <用户>`，并确保 `XDG_RUNTIME_DIR` 与 `DBUS_SESSION_BUS_ADDRESS` 已设置。
+- `Could not resolve hostname github.com` 或 Git 推送失败：运行环境无外网/DNS 被限制。  
+  处理：在具备外网的主机上执行 `git push`，或确保运行环境允许外网访问与 DNS 解析。
+- 若需让 Codex CLI 在非交互环境下自动执行审批相关操作：  
+  处理：在 `.env` 或 `config.toml` 的 `base.codex_cli_args` 中配置 `--dangerously-bypass-approvals-and-sandbox`（请谨慎使用）。
+
 ## 可用指令
 - `/new <内容>`：提交新指令
 - `/session`：查看会话绑定（只读）
