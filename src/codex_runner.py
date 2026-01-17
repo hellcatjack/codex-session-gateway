@@ -362,7 +362,8 @@ class CodexRunner:
                 if is_reasoning:
                     now = time.monotonic()
                     if (
-                        now - last_reasoning_at
+                        self._config.jsonl_reasoning_throttle_seconds > 0
+                        and now - last_reasoning_at
                         < self._config.jsonl_reasoning_throttle_seconds
                     ):
                         continue
@@ -370,8 +371,6 @@ class CodexRunner:
                     mode = self._config.jsonl_reasoning_mode.strip().lower()
                     if mode == "summary":
                         await emit(self._summarize_reasoning(text))
-                    else:
-                        await emit("进度：内部推理进行中（内容已隐藏）。")
                     continue
                 if text == last_message:
                     continue
@@ -552,17 +551,6 @@ class CodexRunner:
                 proc.terminate()
                 break
 
-        async def progress_loop() -> None:
-            while not finished.is_set():
-                await asyncio.sleep(self._config.progress_tick_interval)
-                if finished.is_set():
-                    break
-                idle_for = time.monotonic() - last_output_at
-                if idle_for >= self._config.progress_tick_interval:
-                    await on_output(
-                        f"进度：运行中，已等待 {int(idle_for)} 秒", False
-                    )
-
         async def jsonl_tailer() -> None:
             if not active_resume_id:
                 return
@@ -586,11 +574,6 @@ class CodexRunner:
                 asyncio.create_task(idle_watchdog()),
                 asyncio.create_task(jsonl_tailer()),
             ]
-            if (
-                self._config.progress_tick_interval > 0
-                and not self._config.jsonl_stream_events
-            ):
-                tasks.append(asyncio.create_task(progress_loop()))
 
             try:
                 await asyncio.wait_for(
@@ -789,17 +772,6 @@ class CodexRunner:
                 proc.terminate()
                 break
 
-        async def progress_loop() -> None:
-            while not finished.is_set():
-                await asyncio.sleep(self._config.progress_tick_interval)
-                if finished.is_set():
-                    break
-                idle_for = time.monotonic() - last_output_at
-                if idle_for >= self._config.progress_tick_interval:
-                    await on_output(
-                        f"进度：运行中，已等待 {int(idle_for)} 秒", False
-                    )
-
         async def jsonl_tailer() -> None:
             if not active_resume_id:
                 return
@@ -817,11 +789,6 @@ class CodexRunner:
                 asyncio.create_task(idle_watchdog()),
                 asyncio.create_task(jsonl_tailer()),
             ]
-            if (
-                self._config.progress_tick_interval > 0
-                and not self._config.jsonl_stream_events
-            ):
-                tasks.append(asyncio.create_task(progress_loop()))
 
             if self._config.codex_cli_input_mode == "stdin":
                 os.write(master_fd, self._build_input(prompt).encode("utf-8"))

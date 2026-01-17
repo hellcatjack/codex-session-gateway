@@ -43,23 +43,25 @@ python -m src.main
 db_path = "data/app.db"
 lock_path = "data/app.lock"
 codex_cli_cmd = "codex"
+codex_cli_args = []
 codex_cli_input_mode = "stdin"
+codex_cli_skip_git_check = true
 jsonl_sync_interval_seconds = 3
 message_chunk_limit = 3500
 
 [[bots]]
-name = "primary"
-token = "${ENV:TELEGRAM_BOT_TOKEN_PRIMARY}"
+name = "stock"
+token = "${ENV:TELEGRAM_BOT_TOKEN_STOCK}"
 allowed_user_ids = [123456789]
-resume_id = "${ENV:CODEX_CLI_RESUME_ID_PRIMARY}"
-codex_workdir = "${ENV:CODEX_WORKDIR_PRIMARY}"
+resume_id = "${ENV:CODEX_CLI_RESUME_ID_STOCK}"
+codex_workdir = "${ENV:CODEX_WORKDIR_STOCK}"
 
 [[bots]]
-name = "backup"
-token = "${ENV:TELEGRAM_BOT_TOKEN_BACKUP}"
-allowed_user_ids = [123456789, 987654321]
-resume_id = "${ENV:CODEX_CLI_RESUME_ID_BACKUP}"
-codex_workdir = "${ENV:CODEX_WORKDIR_BACKUP}"
+name = "gateway"
+token = "${ENV:TELEGRAM_BOT_TOKEN_GATEWAY}"
+allowed_user_ids = [123456789]
+resume_id = "${ENV:CODEX_CLI_RESUME_ID_GATEWAY}"
+codex_workdir = "${ENV:CODEX_WORKDIR_GATEWAY}"
 ```
 
 ### .env（兼容单 bot）
@@ -82,15 +84,15 @@ codex_workdir = "${ENV:CODEX_WORKDIR_BACKUP}"
 - `LOCK_PATH`：进程锁文件路径（默认 `data/app.lock`，用于防止多重启动）
 - `STREAM_FLUSH_INTERVAL`：输出节流间隔秒数（默认 `1.5`）
 - `STREAM_INCLUDE_STDERR`：是否显示 stderr（`1/0`，默认 `0`）
-- `PROGRESS_TICK_INTERVAL`：进度探针间隔秒数（默认 `15`，设置为 `0` 可关闭等待提示）
-- `RUN_TIMEOUT_SECONDS`：单次运行超时秒数（默认 `900`）
-- `CONTEXT_COMPACTION_IDLE_TIMEOUT_SECONDS`：检测到 `Context compacted` 后无新输出的等待秒数（默认 `60`，用于防止进程卡住）
-- `NO_OUTPUT_IDLE_TIMEOUT_SECONDS`：长时间无任何输出时的自动结束秒数（默认 `900`，用于防止僵死进程）
-- `FINAL_RESULT_IDLE_TIMEOUT_SECONDS`：检测到最终结果后无输出的自动结束秒数（默认 `30`，用于防止任务卡住）
+- `PROGRESS_TICK_INTERVAL`：进度心跳已废弃，当前版本忽略该配置
+- `RUN_TIMEOUT_SECONDS`：单次运行超时秒数（示例 `10800`，约 3 小时）
+- `CONTEXT_COMPACTION_IDLE_TIMEOUT_SECONDS`：检测到 `Context compacted` 后无新输出的等待秒数（示例 `10800`，约 3 小时，用于防止进程卡住）
+- `NO_OUTPUT_IDLE_TIMEOUT_SECONDS`：长时间无任何输出时的自动结束秒数（示例 `10800`，约 3 小时，用于防止僵死进程）
+- `FINAL_RESULT_IDLE_TIMEOUT_SECONDS`：检测到最终结果后无输出的自动结束秒数（示例 `10800`，约 3 小时，用于防止任务卡住）
 - `JSONL_SYNC_INTERVAL_SECONDS`：JSONL 同步轮询间隔秒数（默认 `3`，用于同步本地 CLI 的结果）
 - `CODEX_JSONL_STREAM_EVENTS`：是否从 Codex JSONL 实时推送事件到 Telegram（`1/0`，默认 `1`，`agent_reasoning` 内容会被隐藏）
 - `CODEX_JSONL_REASONING_THROTTLE_SECONDS`：推送 `agent_reasoning` 占位提示的最小间隔秒数（默认 `10`）
-- `CODEX_JSONL_REASONING_MODE`：推理事件展示模式，`hidden`（仅占位提示）或 `summary`（安全摘要，默认 `hidden`）
+- `CODEX_JSONL_REASONING_MODE`：推理事件展示模式，`hidden`（不推送）或 `summary`（安全摘要，默认 `summary`）
 - `MESSAGE_CHUNK_LIMIT`：单条消息最大长度（默认 `3500`，实际会被限制在 4096 以内，并自动拆分）
 
 ## Telegram 指令

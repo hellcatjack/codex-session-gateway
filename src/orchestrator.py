@@ -21,6 +21,13 @@ class _JsonlSyncState:
     inode: Optional[int] = None
     offset: int = 0
     handle: Optional[object] = None
+    last_reasoning_at: float = 0.0
+
+
+@dataclass
+class ExternalMessage:
+    text: str
+    is_progress: bool = False
 
 
 SendTextFunc = Callable[[str], Awaitable[None]]
@@ -127,7 +134,26 @@ class Orchestrator:
             return timestamp, None
         return timestamp, "\n".join(parts).strip()
 
-    async def poll_external_results(self, user_id: int, allow_send: bool) -> list[str]:
+    def _extract_jsonl_progress(
+        self, data: dict
+    ) -> tuple[Optional[float], Optional[str]]:
+        timestamp = self._runner.parse_timestamp(data.get("timestamp"))
+        if data.get("type") != "event_msg":
+            return timestamp, None
+        payload = data.get("payload") or {}
+        if payload.get("type") != "agent_reasoning":
+            return timestamp, None
+        text = payload.get("text")
+        if not text:
+            return timestamp, None
+        mode = self._config.jsonl_reasoning_mode.strip().lower()
+        if mode == "summary":
+            return timestamp, CodexRunner._summarize_reasoning(text)
+        return timestamp, None
+
+    async def poll_external_results(
+        self, user_id: int, allow_send: bool
+    ) -> list[ExternalMessage]:
         resume_id = await self.get_resume_id(user_id)
         if not resume_id:
             return []
@@ -188,7 +214,7 @@ class Orchestrator:
             return []
 
         state.handle.seek(state.offset)
-        messages: list[str] = []
+        messages: list[ExternalMessage] = []
         updated = False
         for raw_line in state.handle:
             line = raw_line.strip()
@@ -197,6 +223,21 @@ class Orchestrator:
             try:
                 data = json.loads(line)
             except json.JSONDecodeError:
+                continue
+            progress_ts, progress_text = self._extract_jsonl_progress(data)
+            if progress_text:
+                now = time.monotonic()
+                if (
+                    self._config.jsonl_reasoning_throttle_seconds > 0
+                    and now - state.last_reasoning_at
+                    < self._config.jsonl_reasoning_throttle_seconds
+                ):
+                    continue
+                state.last_reasoning_at = now
+                messages.append(ExternalMessage(progress_text, is_progress=True))
+                if progress_ts is not None:
+                    last_ts = max(last_ts or progress_ts, progress_ts)
+                    updated = True
                 continue
             timestamp, text = self._extract_jsonl_message(data)
             if not text or timestamp is None:
@@ -214,7 +255,7 @@ class Orchestrator:
                 last_ts = max(last_ts or timestamp, timestamp)
                 updated = True
                 continue
-            messages.append(text)
+            messages.append(ExternalMessage(text, is_progress=False))
             await self._session_manager.set_last_result(user_id, text, self._bot_id)
             last_ts = max(last_ts or timestamp, timestamp)
             last_hash = digest

@@ -366,19 +366,33 @@ class TelegramAdapter:
             except Exception as exc:
                 self._logger.warning("JSONL 同步失败 user_id=%s err=%s", user_id, exc)
                 continue
+            progress_messages = [msg for msg in messages if getattr(msg, "is_progress", False)]
+            final_messages = [msg for msg in messages if not getattr(msg, "is_progress", False)]
+
+            def extract_text(msg: object) -> str:
+                return msg.text if hasattr(msg, "text") else str(msg)
+
+            progress_texts = [extract_text(msg) for msg in progress_messages]
+            final_texts = [extract_text(msg) for msg in final_messages]
+            if running and progress_texts:
+                sender = TelegramStreamSender(
+                    context.bot, user_ctx.chat_id, self._config.message_chunk_limit
+                )
+                for message in progress_texts:
+                    await sender.send(message, True)
             if running:
-                if messages:
-                    user_ctx.pending_jsonl.extend(messages)
+                if final_texts:
+                    user_ctx.pending_jsonl.extend(final_texts)
                 continue
 
             pending = user_ctx.pending_jsonl
-            if not messages and not pending:
+            if not final_texts and not pending:
                 continue
             user_ctx.pending_jsonl = []
             sender = TelegramStreamSender(
                 context.bot, user_ctx.chat_id, self._config.message_chunk_limit
             )
-            for message in pending + messages:
+            for message in pending + final_texts:
                 if not self._should_send(user_ctx, message):
                     self._logger.info("JSONL 去重：跳过重复结果 user_id=%s bot_id=%s", user_id, self._bot_id)
                     continue

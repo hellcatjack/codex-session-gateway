@@ -278,6 +278,54 @@ async def test_codex_runner_final_result_idle_terminates(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_codex_runner_no_progress_heartbeat(tmp_path):
+    script = tmp_path / "fake_codex.py"
+    script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import time\n"
+        "time.sleep(0.3)\n"
+    )
+    script.chmod(0o755)
+
+    config = Config(
+        telegram_bot_token="token",
+        telegram_allowed_user_ids={1},
+        codex_cli_cmd=str(script),
+        codex_cli_args=[],
+        codex_cli_input_mode="stdin",
+        codex_cli_resume_id=None,
+        codex_cli_approvals_mode=None,
+        codex_cli_skip_git_check=False,
+        codex_cli_use_pty=False,
+        codex_workdir=".",
+        stream_flush_interval=0.01,
+        stream_include_stderr=False,
+        progress_tick_interval=0.05,
+        run_timeout_seconds=2.0,
+        context_compaction_idle_timeout_seconds=60.0,
+        no_output_idle_timeout_seconds=5.0,
+        final_result_idle_timeout_seconds=30.0,
+        jsonl_sync_interval_seconds=0.0,
+        jsonl_stream_events=False,
+        jsonl_reasoning_throttle_seconds=10.0,
+        jsonl_reasoning_mode="hidden",
+        message_chunk_limit=1000,
+    )
+    runner = CodexRunner(config)
+
+    outputs = []
+
+    async def on_output(text: str, is_error: bool) -> None:
+        outputs.append(text)
+
+    async def on_status(status: str) -> None:
+        return None
+
+    await runner.run("hello", on_output, on_status)
+    assert not any("进度：" in text for text in outputs)
+
+
+@pytest.mark.asyncio
 async def test_codex_runner_dedupes_duplicate_outputs(tmp_path):
     script = tmp_path / "fake_codex.py"
     script.write_text(

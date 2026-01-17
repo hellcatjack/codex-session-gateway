@@ -4,6 +4,7 @@ import pytest
 
 from src.adapters import telegram_adapter
 from src.config import Config
+from src.orchestrator import ExternalMessage
 
 
 class DummyApp:
@@ -111,7 +112,7 @@ async def test_jsonl_messages_cached_until_run_finishes() -> None:
         async def poll_external_results(self, user_id: int, allow_send: bool):
             self.poll_calls += 1
             if self.poll_calls == 1:
-                return ["final result"]
+                return [ExternalMessage("final result")]
             return []
 
         def get_last_chat_id(self, user_id: int):
@@ -149,6 +150,113 @@ async def test_jsonl_messages_cached_until_run_finishes() -> None:
 
     await adapter._sync_jsonl_tick(context)
     assert bot.sent == []
+
+    await adapter._sync_jsonl_tick(context)
+    assert bot.sent == [(123, "final result")]
+
+
+@pytest.mark.asyncio
+async def test_jsonl_progress_sent_while_running() -> None:
+    class ProgressOrchestrator:
+        def __init__(self) -> None:
+            self.running_calls = 0
+
+        async def is_running(self, user_id: int) -> bool:
+            self.running_calls += 1
+            return self.running_calls == 1
+
+        async def poll_external_results(self, user_id: int, allow_send: bool):
+            if self.running_calls == 1:
+                return [
+                    ExternalMessage("内部推理摘要：planning steps（已隐藏原文，长度14字）", is_progress=True),
+                    ExternalMessage("final result"),
+                ]
+            return []
+
+        def get_last_chat_id(self, user_id: int):
+            return 123
+
+    config = Config(
+        telegram_bot_token="token",
+        telegram_allowed_user_ids={1},
+        codex_cli_cmd="codex",
+        codex_cli_args=[],
+        codex_cli_input_mode="stdin",
+        codex_cli_resume_id="resume",
+        codex_cli_approvals_mode=None,
+        codex_cli_skip_git_check=True,
+        codex_cli_use_pty=False,
+        codex_workdir=".",
+        stream_flush_interval=1.0,
+        stream_include_stderr=False,
+        progress_tick_interval=1.0,
+        run_timeout_seconds=1.0,
+        context_compaction_idle_timeout_seconds=1.0,
+        no_output_idle_timeout_seconds=1.0,
+        final_result_idle_timeout_seconds=1.0,
+        jsonl_sync_interval_seconds=1.0,
+        jsonl_stream_events=False,
+        jsonl_reasoning_throttle_seconds=1.0,
+        jsonl_reasoning_mode="hidden",
+        message_chunk_limit=1000,
+    )
+
+    orchestrator = ProgressOrchestrator()
+    adapter = telegram_adapter.TelegramAdapter(config, orchestrator)
+    bot = DummyBot()
+    context = DummyContext(bot)
+
+    await adapter._sync_jsonl_tick(context)
+    assert bot.sent == [(123, "内部推理摘要：planning steps（已隐藏原文，长度14字）")]
+
+    await adapter._sync_jsonl_tick(context)
+    assert (123, "final result") in bot.sent
+
+
+@pytest.mark.asyncio
+async def test_jsonl_progress_suppressed_when_not_running() -> None:
+    class ExternalOrchestrator:
+        async def is_running(self, user_id: int) -> bool:
+            return False
+
+        async def poll_external_results(self, user_id: int, allow_send: bool):
+            return [
+                ExternalMessage("内部推理摘要：planning steps（已隐藏原文，长度14字）", is_progress=True),
+                ExternalMessage("final result"),
+            ]
+
+        def get_last_chat_id(self, user_id: int):
+            return 123
+
+    config = Config(
+        telegram_bot_token="token",
+        telegram_allowed_user_ids={1},
+        codex_cli_cmd="codex",
+        codex_cli_args=[],
+        codex_cli_input_mode="stdin",
+        codex_cli_resume_id="resume",
+        codex_cli_approvals_mode=None,
+        codex_cli_skip_git_check=True,
+        codex_cli_use_pty=False,
+        codex_workdir=".",
+        stream_flush_interval=1.0,
+        stream_include_stderr=False,
+        progress_tick_interval=1.0,
+        run_timeout_seconds=1.0,
+        context_compaction_idle_timeout_seconds=1.0,
+        no_output_idle_timeout_seconds=1.0,
+        final_result_idle_timeout_seconds=1.0,
+        jsonl_sync_interval_seconds=1.0,
+        jsonl_stream_events=False,
+        jsonl_reasoning_throttle_seconds=1.0,
+        jsonl_reasoning_mode="hidden",
+        message_chunk_limit=1000,
+    )
+
+    orchestrator = ExternalOrchestrator()
+    adapter = telegram_adapter.TelegramAdapter(config, orchestrator)
+    bot = DummyBot()
+    context = DummyContext(bot)
 
     await adapter._sync_jsonl_tick(context)
     assert bot.sent == [(123, "final result")]

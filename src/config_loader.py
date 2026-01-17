@@ -148,7 +148,7 @@ def _build_base_config(env: Mapping[str, str], base_data: Mapping[str, Any]) -> 
         jsonl_sync_interval_seconds=get_float("jsonl_sync_interval_seconds", "3"),
         jsonl_stream_events=get_bool("jsonl_stream_events", "1"),
         jsonl_reasoning_throttle_seconds=get_float("jsonl_reasoning_throttle_seconds", "10"),
-        jsonl_reasoning_mode=get("jsonl_reasoning_mode", "hidden"),
+        jsonl_reasoning_mode=get("jsonl_reasoning_mode", "summary"),
         message_chunk_limit=get_int("message_chunk_limit", "3500"),
     )
 

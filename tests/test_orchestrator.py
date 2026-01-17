@@ -4,7 +4,7 @@ import pytest
 
 from src.codex_runner import CodexRunner
 from src.config import Config
-from src.orchestrator import Orchestrator
+from src.orchestrator import ExternalMessage, Orchestrator
 from src.session_manager import SessionManager
 from src.store import Store
 
@@ -307,3 +307,125 @@ async def test_orchestrator_jsonl_sync_dedupes_last_result(tmp_path, monkeypatch
     last_ts, last_hash = store.get_jsonl_state_by_user_id(1)
     assert last_ts is not None
     assert last_hash is not None
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_jsonl_sync_emits_reasoning_progress(tmp_path, monkeypatch):
+    resume_id = "resume-reasoning"
+    codex_home = tmp_path / "codex"
+    sessions_dir = codex_home / "sessions"
+    sessions_dir.mkdir(parents=True)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    session_file = sessions_dir / f"rollout-1-{resume_id}.jsonl"
+    session_file.write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-01-01T00:00:01Z",
+                "type": "event_msg",
+                "payload": {"type": "agent_reasoning", "text": "planning steps"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    config = Config(
+        telegram_bot_token="token",
+        telegram_allowed_user_ids={1},
+        codex_cli_cmd="codex",
+        codex_cli_args=[],
+        codex_cli_input_mode="stdin",
+        codex_cli_resume_id=resume_id,
+        codex_cli_approvals_mode="3",
+        codex_cli_skip_git_check=True,
+        codex_cli_use_pty=False,
+        codex_workdir=".",
+        stream_flush_interval=0.01,
+        stream_include_stderr=False,
+        progress_tick_interval=0.5,
+        run_timeout_seconds=5.0,
+        context_compaction_idle_timeout_seconds=60.0,
+        no_output_idle_timeout_seconds=900.0,
+        final_result_idle_timeout_seconds=30.0,
+        jsonl_sync_interval_seconds=0.0,
+        jsonl_stream_events=False,
+        jsonl_reasoning_throttle_seconds=0.0,
+        jsonl_reasoning_mode="summary",
+        message_chunk_limit=1000,
+    )
+    store = Store(str(tmp_path / "test.db"))
+    store.init()
+    session_manager = SessionManager(store)
+    runner = ControlledRunner()
+    runner.session_file = str(session_file)
+    orchestrator = Orchestrator(config, session_manager, store, runner)
+
+    await session_manager.set_jsonl_state(1, 0.0, None)
+
+    messages = await orchestrator.poll_external_results(1, allow_send=True)
+    assert len(messages) == 1
+    assert isinstance(messages[0], ExternalMessage)
+    assert messages[0].is_progress is True
+    assert messages[0].text.startswith("内部推理摘要")
+
+    session = await session_manager.get_or_create(1)
+    assert session.last_result is None
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_jsonl_sync_suppresses_hidden_reasoning(tmp_path, monkeypatch):
+    resume_id = "resume-hidden"
+    codex_home = tmp_path / "codex"
+    sessions_dir = codex_home / "sessions"
+    sessions_dir.mkdir(parents=True)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    session_file = sessions_dir / f"rollout-1-{resume_id}.jsonl"
+    session_file.write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-01-01T00:00:01Z",
+                "type": "event_msg",
+                "payload": {"type": "agent_reasoning", "text": "planning steps"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    config = Config(
+        telegram_bot_token="token",
+        telegram_allowed_user_ids={1},
+        codex_cli_cmd="codex",
+        codex_cli_args=[],
+        codex_cli_input_mode="stdin",
+        codex_cli_resume_id=resume_id,
+        codex_cli_approvals_mode="3",
+        codex_cli_skip_git_check=True,
+        codex_cli_use_pty=False,
+        codex_workdir=".",
+        stream_flush_interval=0.01,
+        stream_include_stderr=False,
+        progress_tick_interval=0.5,
+        run_timeout_seconds=5.0,
+        context_compaction_idle_timeout_seconds=60.0,
+        no_output_idle_timeout_seconds=900.0,
+        final_result_idle_timeout_seconds=30.0,
+        jsonl_sync_interval_seconds=0.0,
+        jsonl_stream_events=False,
+        jsonl_reasoning_throttle_seconds=0.0,
+        jsonl_reasoning_mode="hidden",
+        message_chunk_limit=1000,
+    )
+    store = Store(str(tmp_path / "test.db"))
+    store.init()
+    session_manager = SessionManager(store)
+    runner = ControlledRunner()
+    runner.session_file = str(session_file)
+    orchestrator = Orchestrator(config, session_manager, store, runner)
+
+    await session_manager.set_jsonl_state(1, 0.0, None)
+
+    messages = await orchestrator.poll_external_results(1, allow_send=True)
+    assert messages == []
