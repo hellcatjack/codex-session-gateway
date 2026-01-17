@@ -214,9 +214,8 @@ class Orchestrator:
                 last_ts = max(last_ts or timestamp, timestamp)
                 updated = True
                 continue
-            if allow_send:
-                messages.append(text)
-                await self._session_manager.set_last_result(user_id, text, self._bot_id)
+            messages.append(text)
+            await self._session_manager.set_last_result(user_id, text, self._bot_id)
             last_ts = max(last_ts or timestamp, timestamp)
             last_hash = digest
             updated = True

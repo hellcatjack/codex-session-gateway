@@ -35,6 +35,7 @@ class _UserContext:
     chat_id: Optional[int] = None
     stream_buffer: str = ""
     dedupe_hashes: dict[str, float] = field(default_factory=dict)
+    pending_jsonl: list[str] = field(default_factory=list)
 
 
 class TelegramStreamSender:
@@ -109,6 +110,7 @@ class TelegramAdapter:
         ctx = self._user_context.setdefault(user_id, _UserContext())
         ctx.stream_buffer = ""
         ctx.dedupe_hashes.clear()
+        ctx.pending_jsonl.clear()
         return ctx
 
     def _append_stream_buffer(self, ctx: _UserContext, text: str) -> None:
@@ -364,12 +366,19 @@ class TelegramAdapter:
             except Exception as exc:
                 self._logger.warning("JSONL 同步失败 user_id=%s err=%s", user_id, exc)
                 continue
-            if not messages:
+            if running:
+                if messages:
+                    user_ctx.pending_jsonl.extend(messages)
                 continue
+
+            pending = user_ctx.pending_jsonl
+            if not messages and not pending:
+                continue
+            user_ctx.pending_jsonl = []
             sender = TelegramStreamSender(
                 context.bot, user_ctx.chat_id, self._config.message_chunk_limit
             )
-            for message in messages:
+            for message in pending + messages:
                 if not self._should_send(user_ctx, message):
                     self._logger.info("JSONL 去重：跳过重复结果 user_id=%s bot_id=%s", user_id, self._bot_id)
                     continue
