@@ -21,3 +21,10 @@ token = "${ENV:TELEGRAM_BOT_TOKEN_GATEWAY}"
 allowed_user_ids = [123456789]
 resume_id = "${ENV:CODEX_CLI_RESUME_ID_GATEWAY}"
 codex_workdir = "${ENV:CODEX_WORKDIR_GATEWAY}"
+
+[[bots]]
+name = "comfyUI"
+token = "${ENV:TELEGRAM_BOT_TOKEN_COMFYUI}"
+allowed_user_ids = [123456789]
+resume_id = "${ENV:CODEX_CLI_RESUME_ID_COMFYUI}"
+codex_workdir = "${ENV:CODEX_WORKDIR_COMFYUI}"
