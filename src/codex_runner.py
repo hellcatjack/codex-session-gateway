@@ -500,8 +500,9 @@ class CodexRunner:
         last_message_path: str | None,
         resume_id: str | None,
         min_timestamp: float | None,
+        emit_output: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
-        if not on_final:
+        if not on_final and emit_output is None:
             return
         last_message = self._read_last_message(last_message_path)
         if not last_message and resume_id:
@@ -512,7 +513,10 @@ class CodexRunner:
                     resume_id, min_timestamp
                 )
         if last_message:
-            await on_final(last_message)
+            if emit_output is not None:
+                await emit_output(last_message)
+            if on_final is not None:
+                await on_final(last_message)
 
     async def run(
         self,
@@ -715,7 +719,11 @@ class CodexRunner:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             await self._emit_final_message(
-                on_final, last_message_path, active_resume_id, run_started_at
+                on_final,
+                last_message_path,
+                active_resume_id,
+                run_started_at,
+                emit_output=lambda message: emit_output(message, False),
             )
             if forced_done:
                 return 0
@@ -948,7 +956,11 @@ class CodexRunner:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             await self._emit_final_message(
-                on_final, last_message_path, active_resume_id, run_started_at
+                on_final,
+                last_message_path,
+                active_resume_id,
+                run_started_at,
+                emit_output=lambda message: emit_output(message, False),
             )
             if forced_done:
                 return 0
