@@ -127,6 +127,71 @@ def test_codex_runner_build_args_with_auto_resume(monkeypatch, tmp_path):
     ]
 
 
+def test_codex_runner_build_args_with_auto_resume_matches_subdirectories(monkeypatch, tmp_path):
+    codex_home = tmp_path / "codex"
+    sessions_dir = codex_home / "sessions"
+    sessions_dir.mkdir(parents=True)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    def write_session(session_id: str, cwd: str, timestamp: str):
+        path = sessions_dir / f"rollout-1-{session_id}.jsonl"
+        path.write_text(
+            json.dumps(
+                {
+                    "timestamp": timestamp,
+                    "type": "session_meta",
+                    "payload": {
+                        "id": session_id,
+                        "timestamp": timestamp,
+                        "cwd": cwd,
+                        "originator": "codex_cli_rs",
+                        "cli_version": "0.98.0",
+                        "source": "cli",
+                        "model_provider": "openai",
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return path
+
+    # Session started from a subdirectory should be considered "under" the workdir.
+    write_session("sess-subdir", "/proj/sub", "2026-01-04T00:00:00Z")
+    write_session("sess-root", "/proj", "2026-01-03T00:00:00Z")
+    # Should not match sibling directories like /proj2.
+    write_session("sess-other", "/proj2", "2026-01-05T00:00:00Z")
+
+    config = Config(
+        telegram_bot_token="token",
+        telegram_allowed_user_ids={1},
+        codex_cli_cmd="codex",
+        codex_cli_args=[],
+        codex_cli_input_mode="stdin",
+        codex_cli_resume_id="auto",
+        codex_cli_approvals_mode="3",
+        codex_cli_skip_git_check=True,
+        codex_cli_use_pty=False,
+        codex_workdir="/proj",
+        stream_flush_interval=0.1,
+        stream_include_stderr=False,
+        progress_tick_interval=1.0,
+        run_timeout_seconds=5.0,
+        context_compaction_idle_timeout_seconds=60.0,
+        no_output_idle_timeout_seconds=900.0,
+        final_result_idle_timeout_seconds=30.0,
+        jsonl_sync_interval_seconds=0.0,
+        jsonl_stream_events=False,
+        jsonl_reasoning_throttle_seconds=10.0,
+        jsonl_reasoning_mode="hidden",
+        message_chunk_limit=1000,
+    )
+    runner = CodexRunner(config)
+    args, use_exec = runner._build_args_for_prompt("hello", None)
+    assert use_exec is True
+    assert args == ["codex", "exec", "--skip-git-repo-check", "resume", "sess-subdir", "-"]
+
+
 @pytest.mark.asyncio
 async def test_codex_runner_run_resolves_auto_for_jsonl_tailer(monkeypatch, tmp_path):
     codex_home = tmp_path / "codex"
@@ -213,6 +278,118 @@ async def test_codex_runner_run_resolves_auto_for_jsonl_tailer(monkeypatch, tmp_
     await append_task
 
     assert "one" in outputs
+
+
+@pytest.mark.asyncio
+async def test_codex_runner_run_auto_resume_switches_to_latest_session(monkeypatch, tmp_path):
+    codex_home = tmp_path / "codex"
+    sessions_dir = codex_home / "sessions"
+    sessions_dir.mkdir(parents=True)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    workdir = tmp_path / "proj"
+    workdir.mkdir()
+
+    old_session_id = "sess-old"
+    old_session_file = sessions_dir / f"rollout-1-{old_session_id}.jsonl"
+    old_session_file.write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-01-03T00:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": old_session_id,
+                    "timestamp": "2026-01-03T00:00:00Z",
+                    "cwd": str(workdir),
+                    "originator": "codex_cli_rs",
+                    "cli_version": "0.98.0",
+                    "source": "cli",
+                    "model_provider": "openai",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    script = tmp_path / "fake_codex.py"
+    script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import time\n"
+        "time.sleep(1.6)\n"
+    )
+    script.chmod(0o755)
+
+    config = Config(
+        telegram_bot_token="token",
+        telegram_allowed_user_ids={1},
+        codex_cli_cmd=str(script),
+        codex_cli_args=[],
+        codex_cli_input_mode="stdin",
+        codex_cli_resume_id="auto",
+        codex_cli_approvals_mode=None,
+        codex_cli_skip_git_check=False,
+        codex_cli_use_pty=False,
+        codex_workdir=str(workdir),
+        stream_flush_interval=0.01,
+        stream_include_stderr=False,
+        progress_tick_interval=0.05,
+        run_timeout_seconds=4.0,
+        context_compaction_idle_timeout_seconds=60.0,
+        no_output_idle_timeout_seconds=4.0,
+        final_result_idle_timeout_seconds=30.0,
+        jsonl_sync_interval_seconds=0.0,
+        jsonl_stream_events=True,
+        jsonl_reasoning_throttle_seconds=0.0,
+        jsonl_reasoning_mode="hidden",
+        message_chunk_limit=1000,
+    )
+    runner = CodexRunner(config)
+
+    outputs: list[str] = []
+
+    async def on_output(text: str, is_error: bool) -> None:
+        outputs.append(text)
+
+    async def on_status(status: str) -> None:
+        return None
+
+    new_session_id = "sess-new"
+    new_session_file = sessions_dir / f"rollout-1-{new_session_id}.jsonl"
+
+    async def create_new_session_and_append_event() -> None:
+        await asyncio.sleep(0.2)
+        new_session_file.write_text(
+            json.dumps(
+                {
+                    "timestamp": "2026-01-04T00:00:00Z",
+                    "type": "session_meta",
+                    "payload": {
+                        "id": new_session_id,
+                        "timestamp": "2026-01-04T00:00:00Z",
+                        "cwd": str(workdir),
+                        "originator": "codex_cli_rs",
+                        "cli_version": "0.98.0",
+                        "source": "cli",
+                        "model_provider": "openai",
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        # Allow auto-resume cache to expire and the tailer to switch before emitting.
+        await asyncio.sleep(0.8)
+        with open(new_session_file, "a", encoding="utf-8") as handle:
+            handle.write(
+                '{"type":"event_msg","payload":{"type":"agent_message","message":"switched"}}\n'
+            )
+
+    append_task = asyncio.create_task(create_new_session_and_append_event())
+    await runner.run("hello", on_output, on_status)
+    await append_task
+
+    assert "switched" in outputs
 
 
 def test_codex_runner_build_args_override_resume():

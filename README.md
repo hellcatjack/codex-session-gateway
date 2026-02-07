@@ -38,9 +38,10 @@ python -m src.main
 
 #### resume_id 取值
 - 固定值：直接填 Codex Session ID（推荐用于“稳定绑定同一个会话”的场景）。
-- `"auto"`：自动跟随 `codex_workdir` 下最新的主会话（读取 `~/.codex/sessions/**.jsonl` 的 `session_meta.payload.cwd` 精确匹配 `codex_workdir`）。
+- `"auto"`：自动跟随 `codex_workdir` **目录树**下最新的主会话（读取 `~/.codex/sessions/**.jsonl` 的 `session_meta.payload.cwd`，匹配 `codex_workdir` 或其子目录；会对路径做 `realpath/normpath` 归一化）。
   - 会自动忽略 subagent 会话（`session_meta.payload.source` 含 `subagent` 的记录）。
   - 用途：当某个会话运行很久导致无法继续 compact，需要在 Codex CLI 中 `/new` 开新对话时，本系统可自动切换到新 Session。
+  - 运行中切换：当 `CODEX_JSONL_STREAM_EVENTS=1` 且运行中检测到同目录树下出现更新的主会话时，JSONL tailer 会自动切换到最新会话（同样忽略 subagent），避免长任务因会话切换导致“没有输出/拿不到最终结果”。
 
 示例（可参考 `config.toml.example`）：
 
@@ -143,6 +144,7 @@ sudo journalctl -u codex-session-gateway -f
 ## 安全与审计
 - 安全与敏感信息规范：`docs/security.md`
 - 最近一次审计报告：`docs/audits/2026-01-16-security-audit.md`
+ - 默认禁用 `httpx/httpcore` 的 INFO 请求日志，避免 Telegram Bot Token 出现在日志（URL 内嵌 token）。
 
 ## 文档索引
 - 全量索引：`docs/INDEX.md`

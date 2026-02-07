@@ -136,6 +136,8 @@ class CodexRunner:
 
         sessions_dir = os.path.join(self._codex_home(), "sessions")
         best: tuple[float, str] | None = None
+        cwd_target = os.path.realpath(os.path.normpath(cwd))
+        cwd_prefix = cwd_target if cwd_target.endswith(os.sep) else f"{cwd_target}{os.sep}"
         if os.path.isdir(sessions_dir):
             for root, _, files in os.walk(sessions_dir):
                 for name in files:
@@ -158,7 +160,11 @@ class CodexRunner:
                     if data.get("type") != "session_meta":
                         continue
                     payload = data.get("payload") or {}
-                    if payload.get("cwd") != cwd:
+                    session_cwd = payload.get("cwd")
+                    if not session_cwd:
+                        continue
+                    session_cwd = os.path.realpath(os.path.normpath(str(session_cwd)))
+                    if session_cwd != cwd_target and not session_cwd.startswith(cwd_prefix):
                         continue
                     if self._is_subagent_session(payload.get("source")):
                         continue
@@ -355,9 +361,12 @@ class CodexRunner:
         resume_id: str,
         finished: asyncio.Event,
         emit: Callable[[str], Awaitable[None]],
+        follow_latest: bool = False,
+        on_session_change: Callable[[str], None] | None = None,
     ) -> None:
         if not self._config.jsonl_stream_events:
             return
+        current_resume_id: str | None = resume_id
         session_file = None
         handle = None
         current_inode: int | None = None
@@ -369,7 +378,21 @@ class CodexRunner:
         try:
             while not finished.is_set():
                 if handle is None:
-                    session_file = self._find_session_file(resume_id)
+                    if follow_latest:
+                        desired = self._resolve_latest_session_id_for_cwd(self._config.codex_workdir)
+                        if desired:
+                            if desired != current_resume_id:
+                                current_resume_id = desired
+                                last_message = None
+                                if on_session_change is not None:
+                                    on_session_change(desired)
+                        else:
+                            await asyncio.sleep(0.5)
+                            continue
+                    if not current_resume_id:
+                        await asyncio.sleep(0.5)
+                        continue
+                    session_file = self._find_session_file(current_resume_id)
                     if not session_file:
                         await asyncio.sleep(0.5)
                         continue
@@ -390,6 +413,23 @@ class CodexRunner:
                     now = time.monotonic()
                     if now - last_stat_check >= stat_interval:
                         last_stat_check = now
+                        if follow_latest:
+                            desired = self._resolve_latest_session_id_for_cwd(self._config.codex_workdir)
+                            if desired and desired != current_resume_id:
+                                try:
+                                    handle.close()
+                                except OSError:
+                                    pass
+                                handle = None
+                                current_inode = None
+                                session_file = None
+                                current_offset = 0
+                                current_resume_id = desired
+                                last_message = None
+                                if on_session_change is not None:
+                                    on_session_change(desired)
+                                await asyncio.sleep(0.2)
+                                continue
                         try:
                             stat = os.stat(session_file)
                         except OSError:
@@ -484,8 +524,10 @@ class CodexRunner:
     ) -> int:
         last_message_path = self._prepare_last_message_file()
         run_started_at = time.time()
+        raw_resume_id = resume_id or self._config.codex_cli_resume_id
+        follow_latest = self._is_auto_resume_id(raw_resume_id)
         resolved_resume_id = self.resolve_resume_id(
-            resume_id or self._config.codex_cli_resume_id
+            raw_resume_id
         )
         args, use_exec = self._build_args_for_prompt(
             prompt, resolved_resume_id, last_message_path
@@ -626,7 +668,7 @@ class CodexRunner:
                 break
 
         async def jsonl_tailer() -> None:
-            if not active_resume_id:
+            if not active_resume_id and not follow_latest:
                 return
 
             async def emit(text: str) -> None:
@@ -634,7 +676,17 @@ class CodexRunner:
                 last_output_at = time.monotonic()
                 await emit_output(text, False)
 
-            await self._tail_jsonl_events(active_resume_id, finished, emit)
+            def on_session_change(new_id: str) -> None:
+                nonlocal active_resume_id
+                active_resume_id = new_id
+
+            await self._tail_jsonl_events(
+                active_resume_id or "",
+                finished,
+                emit,
+                follow_latest=follow_latest,
+                on_session_change=on_session_change if follow_latest else None,
+            )
 
         try:
             if proc.stdin is not None and self._config.codex_cli_input_mode == "stdin":
@@ -693,9 +745,9 @@ class CodexRunner:
         last_message_path: str | None,
         on_final: FinalHandler | None,
     ) -> int:
-        resolved_resume_id = self.resolve_resume_id(
-            resume_id or self._config.codex_cli_resume_id
-        )
+        raw_resume_id = resume_id or self._config.codex_cli_resume_id
+        follow_latest = self._is_auto_resume_id(raw_resume_id)
+        resolved_resume_id = self.resolve_resume_id(raw_resume_id)
         args, _ = self._build_args_for_prompt(
             prompt, resolved_resume_id, last_message_path
         )
@@ -850,7 +902,7 @@ class CodexRunner:
                 break
 
         async def jsonl_tailer() -> None:
-            if not active_resume_id:
+            if not active_resume_id and not follow_latest:
                 return
 
             async def emit(text: str) -> None:
@@ -858,7 +910,17 @@ class CodexRunner:
                 last_output_at = time.monotonic()
                 await emit_output(text, False)
 
-            await self._tail_jsonl_events(active_resume_id, finished, emit)
+            def on_session_change(new_id: str) -> None:
+                nonlocal active_resume_id
+                active_resume_id = new_id
+
+            await self._tail_jsonl_events(
+                active_resume_id or "",
+                finished,
+                emit,
+                follow_latest=follow_latest,
+                on_session_change=on_session_change if follow_latest else None,
+            )
 
         try:
             tasks = [
