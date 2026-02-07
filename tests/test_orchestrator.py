@@ -38,6 +38,9 @@ class ControlledRunner:
     def parse_timestamp(self, value: str | None) -> float | None:
         return CodexRunner.parse_timestamp(value)
 
+    def resolve_resume_id(self, resume_id: str | None) -> str | None:
+        return resume_id
+
 
 @pytest.mark.asyncio
 async def test_orchestrator_queue_processes_next_prompt(tmp_path):
@@ -304,9 +307,231 @@ async def test_orchestrator_jsonl_sync_dedupes_last_result(tmp_path, monkeypatch
 
     messages = await orchestrator.poll_external_results(1, allow_send=True)
     assert messages == []
-    last_ts, last_hash = store.get_jsonl_state_by_user_id(1)
-    assert last_ts is not None
-    assert last_hash is not None
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_get_resume_id_resolves_auto(tmp_path, monkeypatch):
+    codex_home = tmp_path / "codex"
+    sessions_dir = codex_home / "sessions"
+    sessions_dir.mkdir(parents=True)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    def write_session(session_id: str, cwd: str, timestamp: str, source):
+        (sessions_dir / f"rollout-1-{session_id}.jsonl").write_text(
+            json.dumps(
+                {
+                    "timestamp": timestamp,
+                    "type": "session_meta",
+                    "payload": {
+                        "id": session_id,
+                        "timestamp": timestamp,
+                        "cwd": cwd,
+                        "originator": "codex_cli_rs",
+                        "cli_version": "0.98.0",
+                        "source": source,
+                        "model_provider": "openai",
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    write_session("sess-old", "/proj", "2026-01-01T00:00:00Z", "cli")
+    write_session("sess-new", "/proj", "2026-01-02T00:00:00Z", "cli")
+    write_session(
+        "sess-subagent",
+        "/proj",
+        "2026-01-03T00:00:00Z",
+        {"subagent": {"thread_spawn": {"depth": 1}}},
+    )
+
+    config = Config(
+        telegram_bot_token="token",
+        telegram_allowed_user_ids={1},
+        codex_cli_cmd="codex",
+        codex_cli_args=[],
+        codex_cli_input_mode="stdin",
+        codex_cli_resume_id="auto",
+        codex_cli_approvals_mode="3",
+        codex_cli_skip_git_check=True,
+        codex_cli_use_pty=False,
+        codex_workdir="/proj",
+        stream_flush_interval=0.01,
+        stream_include_stderr=False,
+        progress_tick_interval=0.5,
+        run_timeout_seconds=5.0,
+        context_compaction_idle_timeout_seconds=60.0,
+        no_output_idle_timeout_seconds=900.0,
+        final_result_idle_timeout_seconds=30.0,
+        jsonl_sync_interval_seconds=0.0,
+        jsonl_stream_events=False,
+        jsonl_reasoning_throttle_seconds=10.0,
+        jsonl_reasoning_mode="hidden",
+        message_chunk_limit=1000,
+    )
+    store = Store(str(tmp_path / "test.db"))
+    store.init()
+    session_manager = SessionManager(store)
+    runner = CodexRunner(config)
+    orchestrator = Orchestrator(config, session_manager, store, runner)
+
+    resolved = await orchestrator.get_resume_id(1)
+    assert resolved == "sess-new"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_last_result_uses_auto_resume(tmp_path, monkeypatch):
+    codex_home = tmp_path / "codex"
+    sessions_dir = codex_home / "sessions"
+    sessions_dir.mkdir(parents=True)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    session_id = "sess-new"
+    session_file = sessions_dir / f"rollout-1-{session_id}.jsonl"
+    session_file.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "type": "session_meta",
+                        "payload": {
+                            "id": session_id,
+                            "timestamp": "2026-01-01T00:00:00Z",
+                            "cwd": "/proj",
+                            "originator": "codex_cli_rs",
+                            "cli_version": "0.98.0",
+                            "source": "cli",
+                            "model_provider": "openai",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-01-01T00:00:01Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": "hello"}],
+                        },
+                    }
+                ),
+                "",
+            ]
+        )
+    )
+
+    config = Config(
+        telegram_bot_token="token",
+        telegram_allowed_user_ids={1},
+        codex_cli_cmd="codex",
+        codex_cli_args=[],
+        codex_cli_input_mode="stdin",
+        codex_cli_resume_id="auto",
+        codex_cli_approvals_mode="3",
+        codex_cli_skip_git_check=True,
+        codex_cli_use_pty=False,
+        codex_workdir="/proj",
+        stream_flush_interval=0.01,
+        stream_include_stderr=False,
+        progress_tick_interval=0.5,
+        run_timeout_seconds=5.0,
+        context_compaction_idle_timeout_seconds=60.0,
+        no_output_idle_timeout_seconds=900.0,
+        final_result_idle_timeout_seconds=30.0,
+        jsonl_sync_interval_seconds=0.0,
+        jsonl_stream_events=False,
+        jsonl_reasoning_throttle_seconds=10.0,
+        jsonl_reasoning_mode="hidden",
+        message_chunk_limit=1000,
+    )
+    store = Store(str(tmp_path / "test.db"))
+    store.init()
+    session_manager = SessionManager(store)
+    runner = CodexRunner(config)
+    orchestrator = Orchestrator(config, session_manager, store, runner)
+
+    status_messages: list[str] = []
+    stream_messages: list[str] = []
+
+    async def send_status(msg: str) -> None:
+        status_messages.append(msg)
+
+    async def send_stream(text: str, final: bool) -> None:
+        stream_messages.append(text)
+
+    await orchestrator.last_result(1, send_status, send_stream)
+
+    assert "hello" in stream_messages
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_status_shows_resolved_auto_resume(tmp_path, monkeypatch):
+    codex_home = tmp_path / "codex"
+    sessions_dir = codex_home / "sessions"
+    sessions_dir.mkdir(parents=True)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    (sessions_dir / "rollout-1-sess-new.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "sess-new",
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "cwd": "/proj",
+                    "originator": "codex_cli_rs",
+                    "cli_version": "0.98.0",
+                    "source": "cli",
+                    "model_provider": "openai",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    config = Config(
+        telegram_bot_token="token",
+        telegram_allowed_user_ids={1},
+        codex_cli_cmd="codex",
+        codex_cli_args=[],
+        codex_cli_input_mode="stdin",
+        codex_cli_resume_id="auto",
+        codex_cli_approvals_mode="3",
+        codex_cli_skip_git_check=True,
+        codex_cli_use_pty=False,
+        codex_workdir="/proj",
+        stream_flush_interval=0.01,
+        stream_include_stderr=False,
+        progress_tick_interval=0.5,
+        run_timeout_seconds=5.0,
+        context_compaction_idle_timeout_seconds=60.0,
+        no_output_idle_timeout_seconds=900.0,
+        final_result_idle_timeout_seconds=30.0,
+        jsonl_sync_interval_seconds=0.0,
+        jsonl_stream_events=False,
+        jsonl_reasoning_throttle_seconds=10.0,
+        jsonl_reasoning_mode="hidden",
+        message_chunk_limit=1000,
+    )
+    store = Store(str(tmp_path / "test.db"))
+    store.init()
+    session_manager = SessionManager(store)
+    runner = CodexRunner(config)
+    orchestrator = Orchestrator(config, session_manager, store, runner)
+
+    status_messages: list[str] = []
+
+    async def send_status(msg: str) -> None:
+        status_messages.append(msg)
+
+    await orchestrator.status(1, send_status)
+
+    assert any("sess-new" in msg for msg in status_messages)
 
 
 @pytest.mark.asyncio

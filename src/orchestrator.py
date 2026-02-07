@@ -93,7 +93,10 @@ class Orchestrator:
     async def status(self, user_id: int, send_status: SendTextFunc) -> None:
         session = await self._session_manager.get_or_create(user_id, self._bot_id)
         queued = await self._session_manager.peek_queue(user_id, self._bot_id)
-        resume_text = session.resume_id or "未设置"
+        resume_id = self._runner.resolve_resume_id(
+            session.resume_id or self._config.codex_cli_resume_id
+        )
+        resume_text = resume_id or "未设置"
         await send_status(
             f"会话状态：{session.state.value}，排队指令：{queued}，resume_id：{resume_text}"
         )
@@ -104,7 +107,8 @@ class Orchestrator:
 
     async def get_resume_id(self, user_id: int) -> Optional[str]:
         session = await self._session_manager.get_or_create(user_id, self._bot_id)
-        return session.resume_id or self._config.codex_cli_resume_id
+        raw = session.resume_id or self._config.codex_cli_resume_id
+        return self._runner.resolve_resume_id(raw)
 
     async def set_chat_id(self, user_id: int, chat_id: int) -> None:
         await self._session_manager.set_chat_id(user_id, chat_id, self._bot_id)
@@ -281,7 +285,7 @@ class Orchestrator:
             if result:
                 await self._session_manager.set_last_result(user_id, result, self._bot_id)
         if not result:
-            resume_id = session.resume_id or self._config.codex_cli_resume_id
+            resume_id = await self.get_resume_id(user_id)
             if resume_id:
                 result = self._runner.read_last_assistant_message(resume_id)
                 if result:

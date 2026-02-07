@@ -23,10 +23,20 @@ class CodexRunner:
         self._logger = logging.getLogger(__name__)
         self._cpr_request = b"\x1b[6n"
         self._cpr_response = b"\x1b[1;1R"
+        self._auto_resume_cache: tuple[float, str | None] = (0.0, None)
 
     @staticmethod
     def _is_context_compacted(text: str) -> bool:
         return "context compacted" in text.lower()
+
+    @staticmethod
+    def _is_auto_resume_id(resume_id: str | None) -> bool:
+        return bool(resume_id) and resume_id.strip().lower() == "auto"
+
+    def resolve_resume_id(self, resume_id: str | None) -> str | None:
+        if self._is_auto_resume_id(resume_id):
+            return self._resolve_latest_session_id_for_cwd(self._config.codex_workdir)
+        return resume_id
 
     def _build_env(self) -> dict[str, str]:
         env = os.environ.copy()
@@ -44,6 +54,10 @@ class CodexRunner:
     ) -> tuple[list[str], bool]:
         args = [self._config.codex_cli_cmd]
         active_resume_id = resume_id or self._config.codex_cli_resume_id
+        if self._is_auto_resume_id(active_resume_id):
+            active_resume_id = self._resolve_latest_session_id_for_cwd(
+                self._config.codex_workdir
+            )
         if active_resume_id:
             args.append("exec")
             if self._config.codex_cli_skip_git_check:
@@ -105,6 +119,63 @@ class CodexRunner:
     @staticmethod
     def _codex_home() -> str:
         return os.getenv("CODEX_HOME", os.path.expanduser("~/.codex"))
+
+    @classmethod
+    def _is_subagent_session(cls, session_source: object) -> bool:
+        if isinstance(session_source, dict):
+            return "subagent" in session_source
+        return False
+
+    def _resolve_latest_session_id_for_cwd(self, cwd: str) -> str | None:
+        # Cache for a short time; JSONL sync tick is already periodic, and this
+        # avoids re-scanning on every call.
+        now = time.monotonic()
+        last_checked, cached = self._auto_resume_cache
+        if now - last_checked < 0.5:
+            return cached
+
+        sessions_dir = os.path.join(self._codex_home(), "sessions")
+        best: tuple[float, str] | None = None
+        if os.path.isdir(sessions_dir):
+            for root, _, files in os.walk(sessions_dir):
+                for name in files:
+                    if not name.endswith(".jsonl"):
+                        continue
+                    path = os.path.join(root, name)
+                    try:
+                        with open(
+                            path, "r", encoding="utf-8", errors="replace"
+                        ) as handle:
+                            line = handle.readline().strip()
+                    except OSError:
+                        continue
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if data.get("type") != "session_meta":
+                        continue
+                    payload = data.get("payload") or {}
+                    if payload.get("cwd") != cwd:
+                        continue
+                    if self._is_subagent_session(payload.get("source")):
+                        continue
+                    session_id = payload.get("id")
+                    if not session_id:
+                        continue
+                    ts = self._parse_timestamp(payload.get("timestamp")) or self._parse_timestamp(
+                        data.get("timestamp")
+                    )
+                    if ts is None:
+                        continue
+                    if best is None or ts > best[0]:
+                        best = (ts, str(session_id))
+
+        resolved = best[1] if best else None
+        self._auto_resume_cache = (now, resolved)
+        return resolved
 
     def _find_session_file(self, resume_id: str) -> str | None:
         sessions_dir = os.path.join(self._codex_home(), "sessions")
@@ -413,10 +484,13 @@ class CodexRunner:
     ) -> int:
         last_message_path = self._prepare_last_message_file()
         run_started_at = time.time()
-        args, use_exec = self._build_args_for_prompt(
-            prompt, resume_id, last_message_path
+        resolved_resume_id = self.resolve_resume_id(
+            resume_id or self._config.codex_cli_resume_id
         )
-        active_resume_id = resume_id or self._config.codex_cli_resume_id
+        args, use_exec = self._build_args_for_prompt(
+            prompt, resolved_resume_id, last_message_path
+        )
+        active_resume_id = resolved_resume_id
 
         if self._config.codex_cli_use_pty and not use_exec:
             return await self._run_with_pty(
@@ -619,12 +693,15 @@ class CodexRunner:
         last_message_path: str | None,
         on_final: FinalHandler | None,
     ) -> int:
+        resolved_resume_id = self.resolve_resume_id(
+            resume_id or self._config.codex_cli_resume_id
+        )
         args, _ = self._build_args_for_prompt(
-            prompt, resume_id, last_message_path
+            prompt, resolved_resume_id, last_message_path
         )
         master_fd, slave_fd = pty.openpty()
         run_started_at = time.time()
-        active_resume_id = resume_id or self._config.codex_cli_resume_id
+        active_resume_id = resolved_resume_id
 
         proc = await asyncio.create_subprocess_exec(
             *args,

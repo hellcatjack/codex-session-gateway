@@ -36,6 +36,12 @@ python -m src.main
 - `bots`：每个 bot 一条记录，必须包含 `name / token / allowed_user_ids / resume_id / codex_workdir`
 - 支持 `${ENV:KEY}` 占位符，便于把敏感信息放到 `.env`
 
+#### resume_id 取值
+- 固定值：直接填 Codex Session ID（推荐用于“稳定绑定同一个会话”的场景）。
+- `"auto"`：自动跟随 `codex_workdir` 下最新的主会话（读取 `~/.codex/sessions/**.jsonl` 的 `session_meta.payload.cwd` 精确匹配 `codex_workdir`）。
+  - 会自动忽略 subagent 会话（`session_meta.payload.source` 含 `subagent` 的记录）。
+  - 用途：当某个会话运行很久导致无法继续 compact，需要在 Codex CLI 中 `/new` 开新对话时，本系统可自动切换到新 Session。
+
 示例（可参考 `config.toml.example`）：
 
 ```toml

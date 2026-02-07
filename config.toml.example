@@ -12,6 +12,7 @@ message_chunk_limit = 3500
 name = "stock"
 token = "${ENV:TELEGRAM_BOT_TOKEN_STOCK}"
 allowed_user_ids = [123456789]
+# resume_id supports fixed session id or "auto" to follow latest session under codex_workdir
 resume_id = "${ENV:CODEX_CLI_RESUME_ID_STOCK}"
 codex_workdir = "${ENV:CODEX_WORKDIR_STOCK}"
 
@@ -19,6 +20,7 @@ codex_workdir = "${ENV:CODEX_WORKDIR_STOCK}"
 name = "gateway"
 token = "${ENV:TELEGRAM_BOT_TOKEN_GATEWAY}"
 allowed_user_ids = [123456789]
+# resume_id supports fixed session id or "auto" to follow latest session under codex_workdir
 resume_id = "${ENV:CODEX_CLI_RESUME_ID_GATEWAY}"
 codex_workdir = "${ENV:CODEX_WORKDIR_GATEWAY}"
 
@@ -26,5 +28,6 @@ codex_workdir = "${ENV:CODEX_WORKDIR_GATEWAY}"
 name = "comfyUI"
 token = "${ENV:TELEGRAM_BOT_TOKEN_COMFYUI}"
 allowed_user_ids = [123456789]
+# resume_id supports fixed session id or "auto" to follow latest session under codex_workdir
 resume_id = "${ENV:CODEX_CLI_RESUME_ID_COMFYUI}"
 codex_workdir = "${ENV:CODEX_WORKDIR_COMFYUI}"
