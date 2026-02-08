@@ -397,13 +397,15 @@ class TelegramAdapter:
             if not final_texts and not pending:
                 continue
             user_ctx.pending_jsonl = []
-            sender = TelegramStreamSender(
-                context.bot, user_ctx.chat_id, self._config.message_chunk_limit
-            )
             for message in pending + final_texts:
                 if not self._should_send(user_ctx, message):
                     self._logger.info("JSONL 去重：跳过重复结果 user_id=%s bot_id=%s", user_id, self._bot_id)
                     continue
+                # Send each completed assistant message as its own Telegram message
+                # so local CLI runs trigger a push notification per conversation.
+                sender = TelegramStreamSender(
+                    context.bot, user_ctx.chat_id, self._config.message_chunk_limit
+                )
                 await sender.send(message, True)
 
     async def _sync_jsonl_loop(self, application: Application) -> None:

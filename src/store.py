@@ -175,7 +175,9 @@ class Store:
                 """
                 SELECT jsonl_last_ts, jsonl_last_hash
                 FROM sessions
-                WHERE user_id = ? AND (bot_id = ? OR bot_id IS NULL)
+                WHERE user_id = ?
+                  AND (bot_id = ? OR bot_id IS NULL)
+                  AND (jsonl_last_ts IS NOT NULL OR jsonl_last_hash IS NOT NULL)
                 ORDER BY last_activity DESC
                 LIMIT 1
                 """,
