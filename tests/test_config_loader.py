@@ -1,6 +1,6 @@
 import textwrap
 
-from src.config_loader import load_toml_config, resolve_env_placeholders
+from src.config_loader import load_app_config, load_toml_config, resolve_env_placeholders
 
 
 def test_env_placeholder_resolve():
@@ -50,6 +50,39 @@ def test_load_toml_config_resume_id_defaults_to_auto(tmp_path):
     assert result.errors == []
     assert len(result.app_config.bots) == 1
     assert result.app_config.bots[0].resume_id == "auto"
+
+def test_load_toml_config_resume_id_empty_defaults_to_auto(tmp_path):
+    content = textwrap.dedent(
+        """
+        [base]
+        db_path = "data/app.db"
+
+        [[bots]]
+        name = "bot-alpha"
+        token = "token"
+        allowed_user_ids = [1]
+        resume_id = ""
+        codex_workdir = "/app/project-alpha"
+        """
+    ).strip()
+    path = tmp_path / "config.toml"
+    path.write_text(content, encoding="utf-8")
+    result = load_toml_config(str(path), {})
+    assert result.errors == []
+    assert len(result.app_config.bots) == 1
+    assert result.app_config.bots[0].resume_id == "auto"
+
+def test_load_app_config_env_defaults_resume_id_to_auto(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USER_IDS", "1")
+    monkeypatch.delenv("CODEX_CLI_RESUME_ID", raising=False)
+    monkeypatch.delenv("CODEX_WORKDIR", raising=False)
+    app_config = load_app_config(path=str(tmp_path / "missing.toml"))
+    assert len(app_config.bots) == 1
+    bot = app_config.bots[0]
+    assert bot.resume_id == "auto"
+    assert bot.codex_workdir == str(tmp_path)
 
 
 def test_missing_required_fields(tmp_path):

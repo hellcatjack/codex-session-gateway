@@ -14,7 +14,7 @@
 
 ## 运行说明
 - 为避免 `The cursor position could not be read within a normal duration`，运行 Codex CLI 时默认设置 `PROMPT_TOOLKIT_NO_CPR=1` 与 `TERM=xterm-256color`。
-- 默认使用 `resume_id="auto"`（按 `codex_workdir` 自动选择最新会话），并通过 `codex exec resume <id>`（非交互模式）以保证 Telegram 场景可稳定输出。
+- 默认使用 `resume_id="auto"`（按 `codex_workdir` 自动选择最新会话）；当可解析到会话时，通过 `codex exec resume <id>`（非交互模式）以保证 Telegram 场景可稳定输出。
 
 ## 快速开始
 ```bash
@@ -74,9 +74,9 @@ codex_workdir = "${ENV:CODEX_WORKDIR_GATEWAY}"
 至少需要配置：
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_ALLOWED_USER_IDS`
-- `CODEX_WORKDIR`
 
 可选配置：
+- `CODEX_WORKDIR`：工作目录（未配置时默认使用当前工作目录，通常为 systemd 的 `WorkingDirectory`）
 - `CODEX_CLI_RESUME_ID`：固定 Session ID 或 `"auto"`；未配置时默认 `"auto"`（按 `CODEX_WORKDIR` 自动选择最新会话）
 
 其余基础设置可参考 `.env.example`（与 `base` 字段一致）。

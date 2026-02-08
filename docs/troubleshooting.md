@@ -58,6 +58,7 @@ systemctl status codex-session-gateway --no-pager
 ## 如何查看当前自动选择的 Session
 
 - 在 Telegram 里发送 `/status`，输出中会包含当前解析后的 `resume_id`（`auto` 模式会显示实际 session id）。
+- 若显示为 `未设置`，通常表示该 `workdir` 下暂时还没有可用的主会话（`~/.codex/sessions` 中找不到匹配记录）；先在该目录运行一次 Codex CLI 创建会话后再重试。
 
 ## 自测（本地单元测试）
 
