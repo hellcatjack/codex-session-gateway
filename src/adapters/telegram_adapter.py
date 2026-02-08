@@ -31,6 +31,8 @@ _DEDUP_MAX_ENTRIES = 256
 # suppress JSONL-sync "final" messages that are already present in the stream buffer.
 # This avoids confusing "late" duplicates arriving after "运行完成/等待新指令" status updates.
 _STREAM_BUFFER_DEDUP_WINDOW_SECONDS = 10 * 60
+# Bound memory growth for long-running streams; we only need the tail for dedupe.
+_STREAM_BUFFER_MAX_CHARS = 200_000
 
 
 @dataclass
@@ -38,6 +40,10 @@ class _UserContext:
     last_prompt: Optional[str] = None
     chat_id: Optional[int] = None
     stream_buffer: str = ""
+    # Same as stream_buffer but without injecting separators between chunks.
+    # This is important for dedupe: StreamBroker may split long final messages
+    # mid-token, and stream_buffer will contain extra newlines we added.
+    stream_buffer_compact: str = ""
     stream_buffer_updated_at: float = 0.0
     dedupe_hashes: dict[str, float] = field(default_factory=dict)
     pending_jsonl: list[str] = field(default_factory=list)
@@ -114,6 +120,7 @@ class TelegramAdapter:
     def _reset_dedupe(self, user_id: int) -> _UserContext:
         ctx = self._user_context.setdefault(user_id, _UserContext())
         ctx.stream_buffer = ""
+        ctx.stream_buffer_compact = ""
         ctx.stream_buffer_updated_at = 0.0
         ctx.dedupe_hashes.clear()
         ctx.pending_jsonl.clear()
@@ -122,10 +129,15 @@ class TelegramAdapter:
     def _append_stream_buffer(self, ctx: _UserContext, text: str) -> None:
         if not text:
             return
+        ctx.stream_buffer_compact = f"{ctx.stream_buffer_compact}{text}"
+        if len(ctx.stream_buffer_compact) > _STREAM_BUFFER_MAX_CHARS:
+            ctx.stream_buffer_compact = ctx.stream_buffer_compact[-_STREAM_BUFFER_MAX_CHARS :]
         if ctx.stream_buffer:
             ctx.stream_buffer = f"{ctx.stream_buffer}\n{text}"
         else:
             ctx.stream_buffer = text
+        if len(ctx.stream_buffer) > _STREAM_BUFFER_MAX_CHARS:
+            ctx.stream_buffer = ctx.stream_buffer[-_STREAM_BUFFER_MAX_CHARS :]
         ctx.stream_buffer_updated_at = time.time()
 
     def _prune_dedupe(self, ctx: _UserContext) -> None:
@@ -143,14 +155,24 @@ class TelegramAdapter:
     def _should_send(self, ctx: _UserContext, text: str) -> bool:
         # If this JSONL message is already visible in the stream output we sent recently,
         # skip it to prevent late duplicates (JSONL sync runs on an interval).
-        if ctx.stream_buffer and ctx.stream_buffer_updated_at:
+        if (ctx.stream_buffer or ctx.stream_buffer_compact) and ctx.stream_buffer_updated_at:
             now = time.time()
             if now - ctx.stream_buffer_updated_at <= _STREAM_BUFFER_DEDUP_WINDOW_SECONDS:
                 candidate = CodexRunner.normalize_text_for_dedupe(text)
                 if candidate:
                     streamed = CodexRunner.normalize_text_for_dedupe(ctx.stream_buffer)
-                    if candidate and candidate in streamed:
+                    if candidate in streamed:
                         return False
+                    compact = CodexRunner.normalize_text_for_dedupe(ctx.stream_buffer_compact)
+                    # Handles long messages split mid-token by stream chunking.
+                    if candidate in compact:
+                        return False
+                    # Handles cases where the same content was streamed line-by-line (no newlines in compact buffer).
+                    candidate_flat = candidate.replace("\n", "")
+                    if len(candidate_flat) >= 64:
+                        compact_flat = compact.replace("\n", "")
+                        if candidate_flat and candidate_flat in compact_flat:
+                            return False
 
         digest = self._hash_text(text)
         if digest is None:

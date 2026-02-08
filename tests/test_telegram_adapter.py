@@ -418,3 +418,58 @@ async def test_jsonl_final_message_skipped_if_already_streamed() -> None:
 
     await adapter._sync_jsonl_tick(context)
     assert bot.sent == []
+
+
+@pytest.mark.asyncio
+async def test_jsonl_final_message_skipped_if_streamed_was_chunked() -> None:
+    class ExternalOrchestrator:
+        async def is_running(self, user_id: int) -> bool:
+            return False
+
+        async def poll_external_results(self, user_id: int, allow_send: bool):
+            return [ExternalMessage("x" * 4000)]
+
+        def get_last_chat_id(self, user_id: int):
+            return 123
+
+    config = Config(
+        telegram_bot_token="token",
+        telegram_allowed_user_ids={1},
+        codex_cli_cmd="codex",
+        codex_cli_args=[],
+        codex_cli_input_mode="stdin",
+        codex_cli_resume_id="resume",
+        codex_cli_approvals_mode=None,
+        codex_cli_skip_git_check=True,
+        codex_cli_use_pty=False,
+        codex_workdir=".",
+        stream_flush_interval=1.0,
+        stream_include_stderr=False,
+        progress_tick_interval=1.0,
+        run_timeout_seconds=1.0,
+        context_compaction_idle_timeout_seconds=1.0,
+        no_output_idle_timeout_seconds=1.0,
+        final_result_idle_timeout_seconds=1.0,
+        jsonl_sync_interval_seconds=1.0,
+        jsonl_stream_events=False,
+        jsonl_reasoning_throttle_seconds=1.0,
+        jsonl_reasoning_mode="hidden",
+        message_chunk_limit=1000,
+    )
+
+    orchestrator = ExternalOrchestrator()
+    adapter = telegram_adapter.TelegramAdapter(config, orchestrator)
+    bot = DummyBot()
+    context = DummyContext(bot)
+
+    long_text = "x" * 4000
+    # Simulate what we used to build in stream_buffer when StreamBroker splits long content:
+    # we inject a newline between chunks, so the original text is NOT a substring.
+    chunk1, chunk2 = long_text[:3500], long_text[3500:]
+    user_ctx = adapter._user_context.setdefault(1, telegram_adapter._UserContext())
+    user_ctx.stream_buffer = f"{chunk1}\n{chunk2}"
+    user_ctx.stream_buffer_compact = f"{chunk1}{chunk2}"
+    user_ctx.stream_buffer_updated_at = time.time()
+
+    await adapter._sync_jsonl_tick(context)
+    assert bot.sent == []
