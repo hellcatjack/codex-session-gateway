@@ -135,7 +135,10 @@ class CodexRunner:
             return cached
 
         sessions_dir = os.path.join(self._codex_home(), "sessions")
-        best: tuple[float, str] | None = None
+        # Prefer the most recently *active* main session under codex_workdir.
+        # Session meta timestamps reflect session creation time, but long-running
+        # sessions can still be actively written after newer sessions were created.
+        best: tuple[float, str] | None = None  # (mtime, session_id)
         cwd_target = os.path.realpath(os.path.normpath(cwd))
         cwd_prefix = cwd_target if cwd_target.endswith(os.sep) else f"{cwd_target}{os.sep}"
         if os.path.isdir(sessions_dir):
@@ -171,13 +174,12 @@ class CodexRunner:
                     session_id = payload.get("id")
                     if not session_id:
                         continue
-                    ts = self._parse_timestamp(payload.get("timestamp")) or self._parse_timestamp(
-                        data.get("timestamp")
-                    )
-                    if ts is None:
+                    try:
+                        mtime = os.path.getmtime(path)
+                    except OSError:
                         continue
-                    if best is None or ts > best[0]:
-                        best = (ts, str(session_id))
+                    if best is None or mtime > best[0]:
+                        best = (mtime, str(session_id))
 
         resolved = best[1] if best else None
         self._auto_resume_cache = (now, resolved)

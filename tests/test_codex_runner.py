@@ -1,4 +1,5 @@
 import asyncio
+import os
 import json
 import time
 import pytest
@@ -127,6 +128,73 @@ def test_codex_runner_build_args_with_auto_resume(monkeypatch, tmp_path):
     ]
 
 
+def test_codex_runner_auto_resume_prefers_recently_modified_session(monkeypatch, tmp_path):
+    """Auto resume should follow the *active* session (recent mtime), not just newest meta timestamp."""
+    codex_home = tmp_path / "codex"
+    sessions_dir = codex_home / "sessions"
+    sessions_dir.mkdir(parents=True)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    def write_session(session_id: str, cwd: str, timestamp: str, source):
+        path = sessions_dir / f"rollout-1-{session_id}.jsonl"
+        path.write_text(
+            json.dumps(
+                {
+                    "timestamp": timestamp,
+                    "type": "session_meta",
+                    "payload": {
+                        "id": session_id,
+                        "timestamp": timestamp,
+                        "cwd": cwd,
+                        "originator": "codex_cli_rs",
+                        "cli_version": "0.98.0",
+                        "source": source,
+                        "model_provider": "openai",
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return path
+
+    old_path = write_session("sess-old", "/proj", "2026-01-01T00:00:00Z", "cli")
+    new_path = write_session("sess-new", "/proj", "2026-01-02T00:00:00Z", "cli")
+
+    # Simulate activity on the older session after the newer session was created.
+    now = time.time()
+    os.utime(new_path, (now - 10, now - 10))
+    os.utime(old_path, (now, now))
+
+    config = Config(
+        telegram_bot_token="token",
+        telegram_allowed_user_ids={1},
+        codex_cli_cmd="codex",
+        codex_cli_args=["--model", "x"],
+        codex_cli_input_mode="stdin",
+        codex_cli_resume_id="auto",
+        codex_cli_approvals_mode="3",
+        codex_cli_skip_git_check=True,
+        codex_cli_use_pty=False,
+        codex_workdir="/proj",
+        stream_flush_interval=0.1,
+        stream_include_stderr=False,
+        progress_tick_interval=1.0,
+        run_timeout_seconds=5.0,
+        context_compaction_idle_timeout_seconds=60.0,
+        no_output_idle_timeout_seconds=900.0,
+        final_result_idle_timeout_seconds=30.0,
+        jsonl_sync_interval_seconds=0.0,
+        jsonl_stream_events=False,
+        jsonl_reasoning_throttle_seconds=10.0,
+        jsonl_reasoning_mode="hidden",
+        message_chunk_limit=1000,
+    )
+    runner = CodexRunner(config)
+
+    assert runner.resolve_resume_id("auto") == "sess-old"
+
+
 def test_codex_runner_build_args_with_auto_resume_matches_subdirectories(monkeypatch, tmp_path):
     codex_home = tmp_path / "codex"
     sessions_dir = codex_home / "sessions"
@@ -157,8 +225,8 @@ def test_codex_runner_build_args_with_auto_resume_matches_subdirectories(monkeyp
         return path
 
     # Session started from a subdirectory should be considered "under" the workdir.
-    write_session("sess-subdir", "/proj/sub", "2026-01-04T00:00:00Z")
     write_session("sess-root", "/proj", "2026-01-03T00:00:00Z")
+    write_session("sess-subdir", "/proj/sub", "2026-01-04T00:00:00Z")
     # Should not match sibling directories like /proj2.
     write_session("sess-other", "/proj2", "2026-01-05T00:00:00Z")
 
