@@ -9,6 +9,7 @@ This project should support automatically following the latest *main* Codex sess
 For each bot:
 - `resume_id = "<fixed-id>"` keeps the existing behavior.
 - `resume_id = "auto"` enables auto-follow.
+- If `resume_id` is omitted/empty, default to `"auto"`.
 
 Selection rule (this implementation):
 - Match sessions where `session_meta.payload.cwd == codex_workdir` (exact match).
@@ -50,4 +51,3 @@ Added tests cover:
 - Building args resolves `"auto"` to the latest main session and ignores subagents.
 - `run()` uses the resolved resume id for JSONL tailer (stream emits messages).
 - `Orchestrator.get_resume_id()`, `/lastresult`, `/status` work with `"auto"`.
-

@@ -184,8 +184,14 @@ def load_toml_config(path: str, env: Mapping[str, str] | None = None) -> ConfigL
             token = str(_resolve_value(raw_bot.get("token", ""), env)).strip()
             resume_id = raw_bot.get("resume_id")
             resume_id = (
-                _parse_optional(str(_resolve_value(resume_id, env))) if resume_id is not None else None
+                _parse_optional(str(_resolve_value(resume_id, env)))
+                if resume_id is not None
+                else None
             )
+            if not resume_id:
+                # Default to auto-follow latest session under workdir to avoid
+                # manual session id management.
+                resume_id = "auto"
             codex_workdir = str(_resolve_value(raw_bot.get("codex_workdir", ""), env)).strip()
             allowed_user_ids = _parse_allowed_user_ids(raw_bot.get("allowed_user_ids", ""), env)
         except ValueError as exc:
@@ -199,8 +205,6 @@ def load_toml_config(path: str, env: Mapping[str, str] | None = None) -> ConfigL
             missing.append("token")
         if not allowed_user_ids:
             missing.append("allowed_user_ids")
-        if not resume_id:
-            missing.append("resume_id")
         if not codex_workdir:
             missing.append("codex_workdir")
         if missing:
@@ -254,14 +258,12 @@ def load_app_config(path: str = "config.toml") -> AppConfig:
     # Fallback to legacy .env single-bot config
     token = env.get("TELEGRAM_BOT_TOKEN", "").strip()
     allowed_user_ids = _parse_int_set(env.get("TELEGRAM_ALLOWED_USER_IDS", ""))
-    resume_id = _parse_optional(env.get("CODEX_CLI_RESUME_ID", ""))
+    resume_id = _parse_optional(env.get("CODEX_CLI_RESUME_ID", "")) or "auto"
     codex_workdir = env.get("CODEX_WORKDIR", os.getcwd())
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN 未配置")
     if not allowed_user_ids:
         raise RuntimeError("TELEGRAM_ALLOWED_USER_IDS 未配置")
-    if not resume_id:
-        raise RuntimeError("CODEX_CLI_RESUME_ID 未配置")
 
     base = _build_base_config(env, {})
     bot = BotConfig(

@@ -1,5 +1,7 @@
 # Codex Session Gateway 多 Bot 配置与绑定设计
 
+> 更新（2026-02-08）：当前实现已支持 `resume_id` 未配置/为空时默认 `"auto"`，按 `codex_workdir` 自动选择并跟随最新会话，因此不再需要手动维护 Codex Session ID。本设计稿中关于“固定绑定 session id”的内容仅作历史参考。
+
 **目标**
 - 将配置拆分为“基础设置”与“Telegram + Codex 关键绑定”，提升可读性与可维护性。
 - 支持单进程多 Telegram Bot，每个 bot 固定绑定一个 Codex session（resume_id + codex_workdir）。

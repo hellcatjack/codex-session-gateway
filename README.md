@@ -1,6 +1,6 @@
 # Codex Session Gateway
 
-用于在内网单机环境中，通过 Telegram Bot 绑定指定 Session ID，与本地 Codex CLI 实时交互的 Python 服务。
+用于在内网单机环境中，通过 Telegram Bot 绑定指定工作目录（workdir），自动寻找其中最新 Codex Session，与本地 Codex CLI 实时交互的 Python 服务。
 
 ## 功能
 - Telegram 实时对话与流式输出
@@ -14,7 +14,7 @@
 
 ## 运行说明
 - 为避免 `The cursor position could not be read within a normal duration`，运行 Codex CLI 时默认设置 `PROMPT_TOOLKIT_NO_CPR=1` 与 `TERM=xterm-256color`。
-- 当设置 `CODEX_CLI_RESUME_ID` 时，默认使用 `codex exec resume <id>`（非交互模式）以保证 Telegram 场景可稳定输出。
+- 默认使用 `resume_id="auto"`（按 `codex_workdir` 自动选择最新会话），并通过 `codex exec resume <id>`（非交互模式）以保证 Telegram 场景可稳定输出。
 
 ## 快速开始
 ```bash
@@ -33,11 +33,12 @@ python -m src.main
 
 ### config.toml（推荐，多 bot）
 - `base`：基础设置（全局共享）
-- `bots`：每个 bot 一条记录，必须包含 `name / token / allowed_user_ids / resume_id / codex_workdir`
+- `bots`：每个 bot 一条记录，必须包含 `name / token / allowed_user_ids / codex_workdir`；`resume_id` 可选（默认 `auto`）
 - 支持 `${ENV:KEY}` 占位符，便于把敏感信息放到 `.env`
 
 #### resume_id 取值
-- 固定值：直接填 Codex Session ID（推荐用于“稳定绑定同一个会话”的场景）。
+- 未配置：默认 `"auto"`（按 `codex_workdir` 自动选择最新会话）。
+- 固定值：直接填 Codex Session ID（用于“稳定绑定同一个会话”的场景）。
 - `"auto"`：自动跟随 `codex_workdir` **目录树**下最新的主会话（读取 `~/.codex/sessions/**.jsonl` 的 `session_meta.payload.cwd`，匹配 `codex_workdir` 或其子目录；会对路径做 `realpath/normpath` 归一化）。
   - 会自动忽略 subagent 会话（`session_meta.payload.source` 含 `subagent` 的记录）。
   - 用途：当某个会话运行很久导致无法继续 compact，需要在 Codex CLI 中 `/new` 开新对话时，本系统可自动切换到新 Session。
@@ -60,14 +61,12 @@ message_chunk_limit = 3500
 name = "stock"
 token = "${ENV:TELEGRAM_BOT_TOKEN_STOCK}"
 allowed_user_ids = [123456789]
-resume_id = "${ENV:CODEX_CLI_RESUME_ID_STOCK}"
 codex_workdir = "${ENV:CODEX_WORKDIR_STOCK}"
 
 [[bots]]
 name = "gateway"
 token = "${ENV:TELEGRAM_BOT_TOKEN_GATEWAY}"
 allowed_user_ids = [123456789]
-resume_id = "${ENV:CODEX_CLI_RESUME_ID_GATEWAY}"
 codex_workdir = "${ENV:CODEX_WORKDIR_GATEWAY}"
 ```
 
@@ -75,8 +74,10 @@ codex_workdir = "${ENV:CODEX_WORKDIR_GATEWAY}"
 至少需要配置：
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_ALLOWED_USER_IDS`
-- `CODEX_CLI_RESUME_ID`
 - `CODEX_WORKDIR`
+
+可选配置：
+- `CODEX_CLI_RESUME_ID`：固定 Session ID 或 `"auto"`；未配置时默认 `"auto"`（按 `CODEX_WORKDIR` 自动选择最新会话）
 
 其余基础设置可参考 `.env.example`（与 `base` 字段一致）。
 

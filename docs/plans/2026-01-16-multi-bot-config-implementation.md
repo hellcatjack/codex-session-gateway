@@ -2,6 +2,8 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
+> 更新（2026-02-08）：当前实现已支持 `resume_id` 未配置/为空时默认 `"auto"`（按 `codex_workdir` 自动选择最新会话），因此相关“缺 resume_id”校验仅作历史参考。
+
 **Goal:** 引入 `config.toml` 拆分基础配置与 bot 关键绑定，并支持单进程多 bot 固定绑定到各自 Codex session。
 
 **Architecture:** 新增 TOML 配置加载与 `${ENV:...}` 解析；`Config` 重构为 `BaseConfig + BotConfig` 组合；启动时为每个 bot 创建独立适配器/编排器实例，持久层增加 bot 维度隔离。

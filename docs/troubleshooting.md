@@ -55,10 +55,13 @@ git show -s --format=%ci HEAD
 systemctl status codex-session-gateway --no-pager
 ```
 
+## 如何查看当前自动选择的 Session
+
+- 在 Telegram 里发送 `/status`，输出中会包含当前解析后的 `resume_id`（`auto` 模式会显示实际 session id）。
+
 ## 自测（本地单元测试）
 
 ```bash
 cd /app/codexTelegramShell
 .venv/bin/python -m pytest -q
 ```
-

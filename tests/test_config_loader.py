@@ -31,6 +31,26 @@ def test_load_toml_config_ok(tmp_path):
     assert bot.token == "abc"
     assert bot.codex_workdir == "/app/project-alpha"
 
+def test_load_toml_config_resume_id_defaults_to_auto(tmp_path):
+    content = textwrap.dedent(
+        """
+        [base]
+        db_path = "data/app.db"
+
+        [[bots]]
+        name = "bot-alpha"
+        token = "token"
+        allowed_user_ids = [1]
+        codex_workdir = "/app/project-alpha"
+        """
+    ).strip()
+    path = tmp_path / "config.toml"
+    path.write_text(content, encoding="utf-8")
+    result = load_toml_config(str(path), {})
+    assert result.errors == []
+    assert len(result.app_config.bots) == 1
+    assert result.app_config.bots[0].resume_id == "auto"
+
 
 def test_missing_required_fields(tmp_path):
     content = textwrap.dedent(
