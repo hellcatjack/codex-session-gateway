@@ -27,6 +27,10 @@ from ..orchestrator import Orchestrator
 TELEGRAM_MESSAGE_LIMIT = 4096
 _DEDUP_TTL_SECONDS = 3600
 _DEDUP_MAX_ENTRIES = 256
+# If we recently streamed output for this user (via /new or free-form text),
+# suppress JSONL-sync "final" messages that are already present in the stream buffer.
+# This avoids confusing "late" duplicates arriving after "运行完成/等待新指令" status updates.
+_STREAM_BUFFER_DEDUP_WINDOW_SECONDS = 10 * 60
 
 
 @dataclass
@@ -34,6 +38,7 @@ class _UserContext:
     last_prompt: Optional[str] = None
     chat_id: Optional[int] = None
     stream_buffer: str = ""
+    stream_buffer_updated_at: float = 0.0
     dedupe_hashes: dict[str, float] = field(default_factory=dict)
     pending_jsonl: list[str] = field(default_factory=list)
 
@@ -109,6 +114,7 @@ class TelegramAdapter:
     def _reset_dedupe(self, user_id: int) -> _UserContext:
         ctx = self._user_context.setdefault(user_id, _UserContext())
         ctx.stream_buffer = ""
+        ctx.stream_buffer_updated_at = 0.0
         ctx.dedupe_hashes.clear()
         ctx.pending_jsonl.clear()
         return ctx
@@ -120,6 +126,7 @@ class TelegramAdapter:
             ctx.stream_buffer = f"{ctx.stream_buffer}\n{text}"
         else:
             ctx.stream_buffer = text
+        ctx.stream_buffer_updated_at = time.time()
 
     def _prune_dedupe(self, ctx: _UserContext) -> None:
         if not ctx.dedupe_hashes:
@@ -134,6 +141,17 @@ class TelegramAdapter:
             ctx.dedupe_hashes.pop(key, None)
 
     def _should_send(self, ctx: _UserContext, text: str) -> bool:
+        # If this JSONL message is already visible in the stream output we sent recently,
+        # skip it to prevent late duplicates (JSONL sync runs on an interval).
+        if ctx.stream_buffer and ctx.stream_buffer_updated_at:
+            now = time.time()
+            if now - ctx.stream_buffer_updated_at <= _STREAM_BUFFER_DEDUP_WINDOW_SECONDS:
+                candidate = CodexRunner.normalize_text_for_dedupe(text)
+                if candidate:
+                    streamed = CodexRunner.normalize_text_for_dedupe(ctx.stream_buffer)
+                    if candidate and candidate in streamed:
+                        return False
+
         digest = self._hash_text(text)
         if digest is None:
             return True
