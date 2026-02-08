@@ -3,6 +3,7 @@
 ## 核心文档
 - `README.md`：快速开始与日常使用说明。
 - `docs/security.md`：敏感信息与提交规范。
+- `docs/troubleshooting.md`：常见问题与排障（重复消息、JobQueue 警告等）。
 
 ## 审计报告
 - `docs/audits/2026-01-16-security-audit.md`：仓库安全审计结果与建议。

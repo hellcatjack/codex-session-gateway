@@ -144,7 +144,10 @@ sudo journalctl -u codex-session-gateway -f
 ## 安全与审计
 - 安全与敏感信息规范：`docs/security.md`
 - 最近一次审计报告：`docs/audits/2026-01-16-security-audit.md`
- - 默认禁用 `httpx/httpcore` 的 INFO 请求日志，避免 Telegram Bot Token 出现在日志（URL 内嵌 token）。
+- 默认禁用 `httpx/httpcore` 的 INFO 请求日志，避免 Telegram Bot Token 出现在日志（URL 内嵌 token）。
+
+## 常见问题与排障
+- 重复发送结果、JobQueue 警告、如何确认运行版本等：`docs/troubleshooting.md`
 
 ## 文档索引
 - 全量索引：`docs/INDEX.md`
@@ -152,5 +155,5 @@ sudo journalctl -u codex-session-gateway -f
 
 ## 测试
 ```bash
-pytest
+.venv/bin/python -m pytest -q
 ```
