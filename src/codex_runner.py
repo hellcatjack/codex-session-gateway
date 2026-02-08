@@ -503,6 +503,7 @@ class CodexRunner:
         resume_id: str | None,
         min_timestamp: float | None,
         emit_output: Callable[[str], Awaitable[None]] | None = None,
+        already_emitted: Callable[[str], bool] | None = None,
     ) -> None:
         if not on_final and emit_output is None:
             return
@@ -515,7 +516,10 @@ class CodexRunner:
                     resume_id, min_timestamp
                 )
         if last_message:
-            if emit_output is not None:
+            should_emit = True
+            if already_emitted is not None and already_emitted(last_message):
+                should_emit = False
+            if emit_output is not None and should_emit:
                 await emit_output(last_message)
             if on_final is not None:
                 await on_final(last_message)
@@ -573,10 +577,50 @@ class CodexRunner:
         last_message_sent: str | None = None
         fallback_attempted = False
         sent_hashes: set[str] = set()
+        emitted_buffer = ""
+        emitted_buffer_compact = ""
+        emitted_buffer_max_chars = 200_000
 
         def hash_text(text: str) -> str:
             normalized = self._normalize_text_for_dedupe(text)
             return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+        def append_emitted(text: str) -> None:
+            nonlocal emitted_buffer
+            nonlocal emitted_buffer_compact
+
+            normalized = self._normalize_text_for_dedupe(text)
+            if not normalized:
+                return
+            if emitted_buffer:
+                emitted_buffer = f"{emitted_buffer}\n{normalized}"
+            else:
+                emitted_buffer = normalized
+            emitted_buffer_compact = f"{emitted_buffer_compact}{normalized}"
+            if len(emitted_buffer) > emitted_buffer_max_chars:
+                emitted_buffer = emitted_buffer[-emitted_buffer_max_chars:]
+            if len(emitted_buffer_compact) > emitted_buffer_max_chars:
+                emitted_buffer_compact = emitted_buffer_compact[-emitted_buffer_max_chars:]
+
+        def already_emitted_final(message: str) -> bool:
+            # When Codex streams output line-by-line and also writes the final message
+            # to `--output-last-message`, emitting the combined block again duplicates
+            # what the user already saw. Use a rolling buffer to detect this.
+            if not message:
+                return False
+            normalized = self._normalize_text_for_dedupe(message)
+            if not normalized:
+                return False
+            if normalized in emitted_buffer:
+                return True
+            compact = normalized.replace("\n", "")
+            if compact and compact in emitted_buffer_compact:
+                return True
+            # Some streamers may strip newlines; try a newline-insensitive match.
+            flattened = normalized.replace("\n", "")
+            if flattened and flattened in emitted_buffer.replace("\n", ""):
+                return True
+            return False
 
         async def emit_output(text: str, is_error: bool) -> None:
             if not is_error:
@@ -585,6 +629,7 @@ class CodexRunner:
                     if digest in sent_hashes:
                         return
                     sent_hashes.add(digest)
+                    append_emitted(text)
             await on_output(text, is_error)
 
         async def read_stream(stream: asyncio.StreamReader, is_error: bool) -> None:
@@ -726,6 +771,7 @@ class CodexRunner:
                 active_resume_id,
                 run_started_at,
                 emit_output=lambda message: emit_output(message, False),
+                already_emitted=already_emitted_final,
             )
             if forced_done:
                 return 0
@@ -783,10 +829,46 @@ class CodexRunner:
         last_message_sent: str | None = None
         fallback_attempted = False
         sent_hashes: set[str] = set()
+        emitted_buffer = ""
+        emitted_buffer_compact = ""
+        emitted_buffer_max_chars = 200_000
 
         def hash_text(text: str) -> str:
             normalized = self._normalize_text_for_dedupe(text)
             return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+        def append_emitted(text: str) -> None:
+            nonlocal emitted_buffer
+            nonlocal emitted_buffer_compact
+
+            normalized = self._normalize_text_for_dedupe(text)
+            if not normalized:
+                return
+            if emitted_buffer:
+                emitted_buffer = f"{emitted_buffer}\n{normalized}"
+            else:
+                emitted_buffer = normalized
+            emitted_buffer_compact = f"{emitted_buffer_compact}{normalized}"
+            if len(emitted_buffer) > emitted_buffer_max_chars:
+                emitted_buffer = emitted_buffer[-emitted_buffer_max_chars:]
+            if len(emitted_buffer_compact) > emitted_buffer_max_chars:
+                emitted_buffer_compact = emitted_buffer_compact[-emitted_buffer_max_chars:]
+
+        def already_emitted_final(message: str) -> bool:
+            if not message:
+                return False
+            normalized = self._normalize_text_for_dedupe(message)
+            if not normalized:
+                return False
+            if normalized in emitted_buffer:
+                return True
+            compact = normalized.replace("\n", "")
+            if compact and compact in emitted_buffer_compact:
+                return True
+            flattened = normalized.replace("\n", "")
+            if flattened and flattened in emitted_buffer.replace("\n", ""):
+                return True
+            return False
 
         async def emit_output(text: str, is_error: bool) -> None:
             if not is_error:
@@ -795,6 +877,7 @@ class CodexRunner:
                     if digest in sent_hashes:
                         return
                     sent_hashes.add(digest)
+                    append_emitted(text)
             await on_output(text, is_error)
 
         async def read_output() -> None:
@@ -963,6 +1046,7 @@ class CodexRunner:
                 active_resume_id,
                 run_started_at,
                 emit_output=lambda message: emit_output(message, False),
+                already_emitted=already_emitted_final,
             )
             if forced_done:
                 return 0
