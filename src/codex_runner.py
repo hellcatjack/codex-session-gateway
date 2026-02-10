@@ -50,42 +50,32 @@ class CodexRunner:
         return env
 
     def _build_args_for_prompt(
-        self, prompt: str, resume_id: str | None, output_last_message_path: str | None = None
+        self,
+        prompt: str,
+        resume_id: str | None,
+        output_last_message_path: str | None = None,
+        ignore_default_resume_id: bool = False,
     ) -> tuple[list[str], bool]:
-        args = [self._config.codex_cli_cmd]
-        active_resume_id = resume_id or self._config.codex_cli_resume_id
+        args = [self._config.codex_cli_cmd, "exec"]
+        active_resume_id = resume_id if ignore_default_resume_id else (resume_id or self._config.codex_cli_resume_id)
         if self._is_auto_resume_id(active_resume_id):
             active_resume_id = self._resolve_latest_session_id_for_cwd(
                 self._config.codex_workdir
             )
-        if active_resume_id:
-            args.append("exec")
-            if self._config.codex_cli_skip_git_check:
-                args.append("--skip-git-repo-check")
-            if output_last_message_path:
-                args.extend(["--output-last-message", output_last_message_path])
-            args.extend(self._config.codex_cli_args)
-            args.extend(["resume", active_resume_id])
-            if self._config.codex_cli_input_mode == "arg":
-                if self._config.codex_cli_approvals_mode:
-                    self._logger.warning(
-                        "arg 模式无法注入 /approvals 指令，已跳过"
-                    )
-                args.append(prompt)
-            else:
-                args.append("-")
-            return args, True
-
+        if self._config.codex_cli_skip_git_check:
+            args.append("--skip-git-repo-check")
         if output_last_message_path:
             args.extend(["--output-last-message", output_last_message_path])
         args.extend(self._config.codex_cli_args)
+        if active_resume_id:
+            args.extend(["resume", active_resume_id])
         if self._config.codex_cli_input_mode == "arg":
             if self._config.codex_cli_approvals_mode:
-                self._logger.warning(
-                    "arg 模式无法注入 /approvals 指令，已跳过"
-                )
+                self._logger.warning("arg 模式无法注入 /approvals 指令，已跳过")
             args.append(prompt)
-        return args, False
+        else:
+            args.append("-")
+        return args, True
 
     def _build_input(self, prompt: str) -> str:
         approvals_mode = self._config.codex_cli_approvals_mode
@@ -532,15 +522,28 @@ class CodexRunner:
         resume_id: str | None = None,
         on_final: FinalHandler | None = None,
     ) -> int:
+        # Support a subset of Codex interactive slash commands in Telegram:
+        # `/new <prompt>` should start a brand-new session (i.e. do NOT resume).
+        raw_prompt = prompt.strip()
+        force_new_session = False
+        if raw_prompt.startswith("/"):
+            parts = raw_prompt.split(maxsplit=1)
+            if parts and parts[0].lower() == "/new":
+                force_new_session = True
+                prompt = parts[1] if len(parts) > 1 else ""
+
         last_message_path = self._prepare_last_message_file()
         run_started_at = time.time()
-        raw_resume_id = resume_id or self._config.codex_cli_resume_id
-        follow_latest = self._is_auto_resume_id(raw_resume_id)
+        raw_resume_id = None if force_new_session else (resume_id or self._config.codex_cli_resume_id)
+        follow_latest = force_new_session or self._is_auto_resume_id(raw_resume_id)
         resolved_resume_id = self.resolve_resume_id(
             raw_resume_id
         )
         args, use_exec = self._build_args_for_prompt(
-            prompt, resolved_resume_id, last_message_path
+            prompt,
+            resolved_resume_id,
+            last_message_path,
+            ignore_default_resume_id=force_new_session,
         )
         active_resume_id = resolved_resume_id
 

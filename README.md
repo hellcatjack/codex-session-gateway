@@ -104,7 +104,7 @@ codex_workdir = "${ENV:CODEX_WORKDIR_GATEWAY}"
 - `MESSAGE_CHUNK_LIMIT`：单条消息最大长度（默认 `3500`，实际会被限制在 4096 以内，并自动拆分）
 
 ## Telegram 指令
-- `/new <内容>`：提交新指令
+- `/new <内容>`：新建会话并提交指令（等效 Codex CLI `/new <内容>`）
 - `/session`：查看会话绑定（只读）
 - `/stop`：停止当前任务
 - `/status`：查看状态

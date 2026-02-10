@@ -752,6 +752,68 @@ async def test_codex_runner_emits_final_message_on_normal_exit(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_codex_runner_new_command_starts_new_session_ignoring_resume(tmp_path):
+    script = tmp_path / "fake_codex.py"
+    script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import argparse\n"
+        "import sys\n"
+        "\n"
+        "parser = argparse.ArgumentParser(add_help=False)\n"
+        "parser.add_argument('--output-last-message')\n"
+        "args, _ = parser.parse_known_args()\n"
+        "print('ARGV:' + ' '.join(sys.argv[1:]), flush=True)\n"
+        "if args.output_last_message:\n"
+        "    with open(args.output_last_message, 'w', encoding='utf-8') as handle:\n"
+        "        handle.write('done')\n"
+    )
+    script.chmod(0o755)
+
+    config = Config(
+        telegram_bot_token="token",
+        telegram_allowed_user_ids={1},
+        codex_cli_cmd=str(script),
+        codex_cli_args=[],
+        codex_cli_input_mode="stdin",
+        # Even when a fixed resume id is configured, `/new ...` should start a new
+        # session and therefore must NOT pass `resume <id>` to codex exec.
+        codex_cli_resume_id="resume-abc",
+        codex_cli_approvals_mode=None,
+        codex_cli_skip_git_check=True,
+        codex_cli_use_pty=False,
+        codex_workdir=".",
+        stream_flush_interval=0.01,
+        stream_include_stderr=False,
+        progress_tick_interval=0.05,
+        run_timeout_seconds=2.0,
+        context_compaction_idle_timeout_seconds=60.0,
+        no_output_idle_timeout_seconds=2.0,
+        final_result_idle_timeout_seconds=30.0,
+        jsonl_sync_interval_seconds=0.0,
+        jsonl_stream_events=False,
+        jsonl_reasoning_throttle_seconds=10.0,
+        jsonl_reasoning_mode="hidden",
+        message_chunk_limit=1000,
+    )
+    runner = CodexRunner(config)
+
+    outputs: list[str] = []
+
+    async def on_output(text: str, is_error: bool) -> None:
+        outputs.append(text)
+
+    async def on_status(status: str) -> None:
+        return None
+
+    return_code = await runner.run("/new hello", on_output, on_status)
+
+    assert return_code == 0
+    argv_lines = [line for line in outputs if line.startswith("ARGV:")]
+    assert argv_lines
+    assert " resume " not in f" {argv_lines[-1]} "
+
+
+@pytest.mark.asyncio
 async def test_codex_runner_does_not_duplicate_final_message_when_already_streamed(tmp_path):
     script = tmp_path / "fake_codex.py"
     script.write_text(

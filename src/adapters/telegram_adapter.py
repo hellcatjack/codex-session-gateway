@@ -231,7 +231,7 @@ class TelegramAdapter:
             chat_id=update.effective_chat.id,
             text=(
                 "可用命令：\n"
-                "/new <内容> 提交新指令\n"
+                "/new <内容> 新建会话并提交指令\n"
                 "/session 查看当前会话绑定（只读）\n"
                 "/stop 停止当前任务\n"
                 "/status 查看状态\n"
@@ -332,7 +332,8 @@ class TelegramAdapter:
                 chat_id=update.effective_chat.id, text="请提供指令内容。"
             )
             return
-        await self._submit_prompt(update, context, payload)
+        # Mirror Codex CLI behavior: `/new xxx` starts a new session.
+        await self._submit_prompt(update, context, f"/new {payload}")
 
     async def _handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._authorized(update, context):

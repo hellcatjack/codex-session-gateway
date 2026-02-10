@@ -473,3 +473,70 @@ async def test_jsonl_final_message_skipped_if_streamed_was_chunked() -> None:
 
     await adapter._sync_jsonl_tick(context)
     assert bot.sent == []
+
+
+@pytest.mark.asyncio
+async def test_handle_new_passes_new_prefix_to_runner(monkeypatch) -> None:
+    class CaptureOrchestrator:
+        pass
+
+    config = Config(
+        telegram_bot_token="token",
+        telegram_allowed_user_ids={1},
+        codex_cli_cmd="codex",
+        codex_cli_args=[],
+        codex_cli_input_mode="stdin",
+        codex_cli_resume_id="auto",
+        codex_cli_approvals_mode=None,
+        codex_cli_skip_git_check=True,
+        codex_cli_use_pty=False,
+        codex_workdir=".",
+        stream_flush_interval=1.0,
+        stream_include_stderr=False,
+        progress_tick_interval=1.0,
+        run_timeout_seconds=1.0,
+        context_compaction_idle_timeout_seconds=1.0,
+        no_output_idle_timeout_seconds=1.0,
+        final_result_idle_timeout_seconds=1.0,
+        jsonl_sync_interval_seconds=0.0,
+        jsonl_stream_events=False,
+        jsonl_reasoning_throttle_seconds=1.0,
+        jsonl_reasoning_mode="hidden",
+        message_chunk_limit=1000,
+    )
+
+    adapter = telegram_adapter.TelegramAdapter(config, CaptureOrchestrator())
+    bot = DummyBot()
+    context = DummyContext(bot)
+
+    class DummyUser:
+        def __init__(self, user_id: int) -> None:
+            self.id = user_id
+
+    class DummyChat:
+        def __init__(self, chat_id: int) -> None:
+            self.id = chat_id
+
+    class DummyTextMessage:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    class DummyUpdate:
+        def __init__(self, user_id: int, chat_id: int, text: str) -> None:
+            self.effective_user = DummyUser(user_id)
+            self.effective_chat = DummyChat(chat_id)
+            self.message = DummyTextMessage(text)
+
+    async def always_authorized(_update, _context) -> bool:
+        return True
+
+    captured: list[str] = []
+
+    async def fake_submit(_update, _context, prompt: str) -> None:
+        captured.append(prompt)
+
+    monkeypatch.setattr(adapter, "_authorized", always_authorized)
+    monkeypatch.setattr(adapter, "_submit_prompt", fake_submit)
+
+    await adapter._handle_new(DummyUpdate(1, 123, "/new hello"), context)
+    assert captured == ["/new hello"]
