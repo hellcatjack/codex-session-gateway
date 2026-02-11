@@ -126,3 +126,31 @@ def test_base_codex_cli_args_empty_falls_back_to_env(tmp_path):
     assert result.app_config.base.codex_cli_args == [
         "--dangerously-bypass-approvals-and-sandbox"
     ]
+
+
+def test_base_jsonl_settings_support_codex_prefixed_env(tmp_path):
+    toml = """
+    [base]
+
+    [[bots]]
+    name = "bot-alpha"
+    token = "token"
+    allowed_user_ids = [1]
+    resume_id = "resume-1"
+    codex_workdir = "/tmp"
+    """
+    path = tmp_path / "config.toml"
+    path.write_text(toml, encoding="utf-8")
+
+    result = load_toml_config(
+        str(path),
+        {
+            "CODEX_JSONL_STREAM_EVENTS": "0",
+            "CODEX_JSONL_REASONING_THROTTLE_SECONDS": "1.5",
+            "CODEX_JSONL_REASONING_MODE": "hidden",
+        },
+    )
+    assert result.errors == []
+    assert result.app_config.base.jsonl_stream_events is False
+    assert result.app_config.base.jsonl_reasoning_throttle_seconds == 1.5
+    assert result.app_config.base.jsonl_reasoning_mode == "hidden"

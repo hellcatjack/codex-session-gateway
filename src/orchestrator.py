@@ -28,6 +28,7 @@ class _JsonlSyncState:
 class ExternalMessage:
     text: str
     is_progress: bool = False
+    is_result: bool = False
 
 
 SendTextFunc = Callable[[str], Awaitable[None]]
@@ -118,15 +119,15 @@ class Orchestrator:
 
     def _extract_jsonl_message(
         self, data: dict
-    ) -> tuple[Optional[float], Optional[str]]:
+    ) -> tuple[Optional[float], Optional[str], Optional[str]]:
         timestamp = self._runner.parse_timestamp(data.get("timestamp"))
         if data.get("type") != "response_item":
-            return timestamp, None
+            return timestamp, None, None
         payload = data.get("payload") or {}
         if payload.get("type") != "message":
-            return timestamp, None
+            return timestamp, None, None
         if payload.get("role") != "assistant":
-            return timestamp, None
+            return timestamp, None, None
         content = payload.get("content") or []
         parts = []
         for item in content:
@@ -135,8 +136,10 @@ class Orchestrator:
                 if text:
                     parts.append(text)
         if not parts:
-            return timestamp, None
-        return timestamp, "\n".join(parts).strip()
+            return timestamp, None, None
+        phase = payload.get("phase")
+        normalized_phase = phase.strip().lower() if isinstance(phase, str) else None
+        return timestamp, "\n".join(parts).strip(), normalized_phase
 
     def _extract_jsonl_progress(
         self, data: dict
@@ -243,14 +246,16 @@ class Orchestrator:
                     last_ts = max(last_ts or progress_ts, progress_ts)
                     updated = True
                 continue
-            timestamp, text = self._extract_jsonl_message(data)
+            timestamp, text, phase = self._extract_jsonl_message(data)
             if not text or timestamp is None:
                 continue
             if last_ts is not None and timestamp < last_ts:
                 continue
+            is_progress = phase == "commentary"
+            is_result = phase == "final_answer"
             normalized = self._runner.normalize_text_for_dedupe(text)
             digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-            if last_result_hash and digest == last_result_hash:
+            if not is_progress and last_result_hash and digest == last_result_hash:
                 last_ts = max(last_ts or timestamp, timestamp)
                 last_hash = digest
                 updated = True
@@ -259,8 +264,11 @@ class Orchestrator:
                 last_ts = max(last_ts or timestamp, timestamp)
                 updated = True
                 continue
-            messages.append(ExternalMessage(text, is_progress=False))
-            await self._session_manager.set_last_result(user_id, text, self._bot_id)
+            messages.append(
+                ExternalMessage(text, is_progress=is_progress, is_result=is_result)
+            )
+            if not is_progress:
+                await self._session_manager.set_last_result(user_id, text, self._bot_id)
             last_ts = max(last_ts or timestamp, timestamp)
             last_hash = digest
             updated = True

@@ -5,7 +5,8 @@ codex_cli_cmd = "codex"
 codex_cli_args = []
 codex_cli_input_mode = "stdin"
 codex_cli_skip_git_check = true
-jsonl_sync_interval_seconds = 3
+jsonl_sync_interval_seconds = 1
+jsonl_reasoning_mode = "hidden"
 message_chunk_limit = 3500
 
 [[bots]]

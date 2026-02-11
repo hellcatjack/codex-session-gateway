@@ -46,7 +46,7 @@ class _UserContext:
     stream_buffer_compact: str = ""
     stream_buffer_updated_at: float = 0.0
     dedupe_hashes: dict[str, float] = field(default_factory=dict)
-    pending_jsonl: list[str] = field(default_factory=list)
+    pending_result: Optional[str] = None
     jsonl_sender: Optional["TelegramStreamSender"] = None
     jsonl_sender_chat_id: Optional[int] = None
 
@@ -125,7 +125,7 @@ class TelegramAdapter:
         ctx.stream_buffer_compact = ""
         ctx.stream_buffer_updated_at = 0.0
         ctx.dedupe_hashes.clear()
-        ctx.pending_jsonl.clear()
+        ctx.pending_result = None
         # New conversation must start a fresh Telegram message bubble.
         ctx.jsonl_sender = None
         ctx.jsonl_sender_chat_id = None
@@ -423,44 +423,56 @@ class TelegramAdapter:
             except Exception as exc:
                 self._logger.warning("JSONL 同步失败 user_id=%s err=%s", user_id, exc)
                 continue
-            progress_messages = [msg for msg in messages if getattr(msg, "is_progress", False)]
-            final_messages = [msg for msg in messages if not getattr(msg, "is_progress", False)]
+            progress_texts: list[str] = []
+            final_texts: list[str] = []
 
             def extract_text(msg: object) -> str:
                 return msg.text if hasattr(msg, "text") else str(msg)
 
-            progress_texts = [extract_text(msg) for msg in progress_messages]
-            final_texts = [extract_text(msg) for msg in final_messages]
-            if running and progress_texts:
-                if not self._config.jsonl_stream_events:
-                    sender = self._get_jsonl_sender(
-                        user_ctx, context.bot, user_ctx.chat_id
-                    )
-                    for message in progress_texts:
-                        if not self._should_send(user_ctx, message):
-                            self._logger.info(
-                                "JSONL 去重：跳过重复进度 user_id=%s bot_id=%s",
-                                user_id,
-                                self._bot_id,
-                            )
-                            continue
-                        await sender.send(message, True)
+            for msg in messages:
+                text = extract_text(msg)
+                if getattr(msg, "is_progress", False):
+                    progress_texts.append(text)
+                    continue
+                if getattr(msg, "is_result", False):
+                    final_texts.append(text)
+                    continue
+                # No explicit phase marker in JSONL; use running state as fallback.
+                if running:
+                    progress_texts.append(text)
+                else:
+                    final_texts.append(text)
+            if progress_texts:
+                sender = self._get_jsonl_sender(
+                    user_ctx, context.bot, user_ctx.chat_id
+                )
+                for message in progress_texts:
+                    if not self._should_send(user_ctx, message):
+                        self._logger.info(
+                            "JSONL 去重：跳过重复进度 user_id=%s bot_id=%s",
+                            user_id,
+                            self._bot_id,
+                        )
+                        continue
+                    await sender.send(message, True)
             if running:
                 if final_texts:
-                    user_ctx.pending_jsonl.extend(final_texts)
+                    # Keep only the latest result candidate while running.
+                    user_ctx.pending_result = final_texts[-1]
                 continue
 
-            pending = user_ctx.pending_jsonl
-            if not final_texts and not pending:
+            latest_result = final_texts[-1] if final_texts else user_ctx.pending_result
+            if not latest_result:
                 continue
-            user_ctx.pending_jsonl = []
+            user_ctx.pending_result = None
+            # Final result must use a new bubble, separated from progress updates.
+            user_ctx.jsonl_sender = None
+            user_ctx.jsonl_sender_chat_id = None
             sender = self._get_jsonl_sender(user_ctx, context.bot, user_ctx.chat_id)
-            for message in pending + final_texts:
-                if not self._should_send(user_ctx, message):
-                    self._logger.info("JSONL 去重：跳过重复结果 user_id=%s bot_id=%s", user_id, self._bot_id)
-                    continue
-                # Keep JSONL sync output in one editable message to avoid repeated notifications.
-                await sender.send(message, True)
+            if not self._should_send(user_ctx, latest_result):
+                self._logger.info("JSONL 去重：跳过重复结果 user_id=%s bot_id=%s", user_id, self._bot_id)
+                continue
+            await sender.send(latest_result, True)
             # A completed result batch marks the end of one conversation output.
             # Freeze current bubble so subsequent batches always open a fresh one.
             user_ctx.jsonl_sender = None

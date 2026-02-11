@@ -83,23 +83,33 @@ def _resolve_value(value: Any, env: Mapping[str, str]) -> Any:
 
 
 def _build_base_config(env: Mapping[str, str], base_data: Mapping[str, Any]) -> BaseConfig:
+    def _env_value(key: str, default: str) -> Any:
+        env_key = key.upper()
+        if env_key in env:
+            return env[env_key]
+        if not env_key.startswith("CODEX_"):
+            codex_env_key = f"CODEX_{env_key}"
+            if codex_env_key in env:
+                return env[codex_env_key]
+        return default
+
     def get(key: str, default: str) -> str:
-        raw = base_data.get(key, env.get(key.upper(), default))
+        raw = base_data.get(key, _env_value(key, default))
         raw = _resolve_value(raw, env)
         return str(raw)
 
     def get_bool(key: str, default: str) -> bool:
-        raw = base_data.get(key, env.get(key.upper(), default))
+        raw = base_data.get(key, _env_value(key, default))
         raw = _resolve_value(raw, env)
         return _parse_bool(str(raw))
 
     def get_float(key: str, default: str) -> float:
-        raw = base_data.get(key, env.get(key.upper(), default))
+        raw = base_data.get(key, _env_value(key, default))
         raw = _resolve_value(raw, env)
         return float(raw)
 
     def get_int(key: str, default: str) -> int:
-        raw = base_data.get(key, env.get(key.upper(), default))
+        raw = base_data.get(key, _env_value(key, default))
         raw = _resolve_value(raw, env)
         return int(raw)
 
