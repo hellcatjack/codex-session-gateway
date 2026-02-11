@@ -814,6 +814,113 @@ async def test_codex_runner_new_command_starts_new_session_ignoring_resume(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_codex_runner_new_command_session_is_resumable_via_cli_resume(monkeypatch, tmp_path):
+    """`/new` creates a fresh session; it should also be discoverable via Codex CLI `/resume`."""
+    codex_home = tmp_path / "codex"
+    sessions_dir = codex_home / "sessions"
+    sessions_dir.mkdir(parents=True)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    workdir = tmp_path / "proj"
+    workdir.mkdir()
+
+    session_id = "sess-new"
+    session_file = sessions_dir / f"rollout-1-{session_id}.jsonl"
+    history_file = codex_home / "history.jsonl"
+
+    script = tmp_path / "fake_codex.py"
+    script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import argparse\n"
+        "import json\n"
+        "import os\n"
+        "from pathlib import Path\n"
+        "\n"
+        "parser = argparse.ArgumentParser(add_help=False)\n"
+        "parser.add_argument('--output-last-message')\n"
+        "args, _ = parser.parse_known_args()\n"
+        "\n"
+        "codex_home = os.environ.get('CODEX_HOME')\n"
+        "sessions_dir = Path(codex_home) / 'sessions'\n"
+        "sessions_dir.mkdir(parents=True, exist_ok=True)\n"
+        f"session_id = {session_id!r}\n"
+        "path = sessions_dir / f'rollout-1-{session_id}.jsonl'\n"
+        "timestamp = '2026-01-03T00:00:00Z'\n"
+        "path.write_text(\n"
+        "    json.dumps({\n"
+        "        'timestamp': timestamp,\n"
+        "        'type': 'session_meta',\n"
+        "        'payload': {\n"
+        "            'id': session_id,\n"
+        "            'timestamp': timestamp,\n"
+        "            'cwd': os.getcwd(),\n"
+        "            'originator': 'codex_exec',\n"
+        "            'cli_version': '0.98.0',\n"
+        "            'source': 'exec',\n"
+        "            'model_provider': 'openai',\n"
+        "        },\n"
+        "    }) + '\\n',\n"
+        "    encoding='utf-8',\n"
+        ")\n"
+        "if args.output_last_message:\n"
+        "    Path(args.output_last_message).write_text('done', encoding='utf-8')\n"
+        "print('ok', flush=True)\n"
+    )
+    script.chmod(0o755)
+
+    config = Config(
+        telegram_bot_token="token",
+        telegram_allowed_user_ids={1},
+        codex_cli_cmd=str(script),
+        codex_cli_args=[],
+        codex_cli_input_mode="stdin",
+        codex_cli_resume_id="auto",
+        codex_cli_approvals_mode=None,
+        codex_cli_skip_git_check=True,
+        codex_cli_use_pty=False,
+        codex_workdir=str(workdir),
+        stream_flush_interval=0.01,
+        stream_include_stderr=False,
+        progress_tick_interval=0.05,
+        run_timeout_seconds=2.0,
+        context_compaction_idle_timeout_seconds=60.0,
+        no_output_idle_timeout_seconds=2.0,
+        final_result_idle_timeout_seconds=30.0,
+        jsonl_sync_interval_seconds=0.0,
+        # Ensure the behavior does not depend on JSONL streaming being enabled.
+        jsonl_stream_events=False,
+        jsonl_reasoning_throttle_seconds=10.0,
+        jsonl_reasoning_mode="hidden",
+        message_chunk_limit=1000,
+    )
+    runner = CodexRunner(config)
+
+    async def on_output(text: str, is_error: bool) -> None:
+        return None
+
+    async def on_status(status: str) -> None:
+        return None
+
+    return_code = await runner.run("/new hello", on_output, on_status)
+    assert return_code == 0
+    assert session_file.exists()
+
+    meta = json.loads(session_file.read_text(encoding="utf-8").splitlines()[0])
+    assert meta["type"] == "session_meta"
+    assert meta["payload"]["id"] == session_id
+    # The gateway should promote sessions created via `/new` so Codex CLI `/resume` can list them.
+    assert meta["payload"]["originator"] == "codex_cli_rs"
+    assert meta["payload"]["source"] == "cli"
+
+    assert history_file.exists()
+    history_lines = history_file.read_text(encoding="utf-8").splitlines()
+    assert history_lines
+    entry = json.loads(history_lines[-1])
+    assert entry["session_id"] == session_id
+    assert entry["text"] == "hello"
+
+
+@pytest.mark.asyncio
 async def test_codex_runner_does_not_duplicate_final_message_when_already_streamed(tmp_path):
     script = tmp_path / "fake_codex.py"
     script.write_text(

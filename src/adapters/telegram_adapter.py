@@ -47,6 +47,8 @@ class _UserContext:
     stream_buffer_updated_at: float = 0.0
     dedupe_hashes: dict[str, float] = field(default_factory=dict)
     pending_jsonl: list[str] = field(default_factory=list)
+    jsonl_sender: Optional["TelegramStreamSender"] = None
+    jsonl_sender_chat_id: Optional[int] = None
 
 
 class TelegramStreamSender:
@@ -124,6 +126,9 @@ class TelegramAdapter:
         ctx.stream_buffer_updated_at = 0.0
         ctx.dedupe_hashes.clear()
         ctx.pending_jsonl.clear()
+        # New conversation must start a fresh Telegram message bubble.
+        ctx.jsonl_sender = None
+        ctx.jsonl_sender_chat_id = None
         return ctx
 
     def _append_stream_buffer(self, ctx: _UserContext, text: str) -> None:
@@ -189,6 +194,17 @@ class TelegramAdapter:
             return
         self._prune_dedupe(ctx)
         ctx.dedupe_hashes[digest] = time.time()
+
+    def _get_jsonl_sender(
+        self, user_ctx: _UserContext, bot, chat_id: int
+    ) -> TelegramStreamSender:
+        sender = user_ctx.jsonl_sender
+        if sender is not None and user_ctx.jsonl_sender_chat_id == chat_id:
+            return sender
+        sender = TelegramStreamSender(bot, chat_id, self._config.message_chunk_limit)
+        user_ctx.jsonl_sender = sender
+        user_ctx.jsonl_sender_chat_id = chat_id
+        return sender
 
     def run(self) -> None:
         try:
@@ -417,8 +433,8 @@ class TelegramAdapter:
             final_texts = [extract_text(msg) for msg in final_messages]
             if running and progress_texts:
                 if not self._config.jsonl_stream_events:
-                    sender = TelegramStreamSender(
-                        context.bot, user_ctx.chat_id, self._config.message_chunk_limit
+                    sender = self._get_jsonl_sender(
+                        user_ctx, context.bot, user_ctx.chat_id
                     )
                     for message in progress_texts:
                         if not self._should_send(user_ctx, message):
@@ -438,16 +454,17 @@ class TelegramAdapter:
             if not final_texts and not pending:
                 continue
             user_ctx.pending_jsonl = []
+            sender = self._get_jsonl_sender(user_ctx, context.bot, user_ctx.chat_id)
             for message in pending + final_texts:
                 if not self._should_send(user_ctx, message):
                     self._logger.info("JSONL 去重：跳过重复结果 user_id=%s bot_id=%s", user_id, self._bot_id)
                     continue
-                # Send each completed assistant message as its own Telegram message
-                # so local CLI runs trigger a push notification per conversation.
-                sender = TelegramStreamSender(
-                    context.bot, user_ctx.chat_id, self._config.message_chunk_limit
-                )
+                # Keep JSONL sync output in one editable message to avoid repeated notifications.
                 await sender.send(message, True)
+            # A completed result batch marks the end of one conversation output.
+            # Freeze current bubble so subsequent batches always open a fresh one.
+            user_ctx.jsonl_sender = None
+            user_ctx.jsonl_sender_chat_id = None
 
     async def _sync_jsonl_loop(self, application: Application) -> None:
         try:

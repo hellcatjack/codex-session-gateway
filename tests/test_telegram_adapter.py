@@ -211,7 +211,7 @@ async def test_jsonl_progress_sent_while_running() -> None:
     assert bot.sent == [(123, "内部推理摘要：planning steps（已隐藏原文，长度14字）")]
 
     await adapter._sync_jsonl_tick(context)
-    assert (123, "final result") in bot.sent
+    assert bot.edited[-1][2] == "内部推理摘要：planning steps（已隐藏原文，长度14字）\nfinal result"
 
 
 @pytest.mark.asyncio
@@ -322,7 +322,7 @@ async def test_jsonl_progress_suppressed_when_not_running() -> None:
 
 
 @pytest.mark.asyncio
-async def test_jsonl_final_messages_sent_separately() -> None:
+async def test_jsonl_final_messages_aggregated_in_one_message() -> None:
     class MultiOrchestrator:
         async def is_running(self, user_id: int) -> bool:
             return False
@@ -364,8 +364,128 @@ async def test_jsonl_final_messages_sent_separately() -> None:
     context = DummyContext(bot)
 
     await adapter._sync_jsonl_tick(context)
+    assert bot.sent == [(123, "one")]
+    assert bot.edited[-1][2] == "one\ntwo"
+
+
+@pytest.mark.asyncio
+async def test_jsonl_final_messages_start_new_bubble_across_ticks() -> None:
+    class MultiTickOrchestrator:
+        def __init__(self) -> None:
+            self.poll_calls = 0
+
+        async def is_running(self, user_id: int) -> bool:
+            return False
+
+        async def poll_external_results(self, user_id: int, allow_send: bool):
+            self.poll_calls += 1
+            if self.poll_calls == 1:
+                return [ExternalMessage("one")]
+            if self.poll_calls == 2:
+                return [ExternalMessage("two")]
+            return []
+
+        def get_last_chat_id(self, user_id: int):
+            return 123
+
+    config = Config(
+        telegram_bot_token="token",
+        telegram_allowed_user_ids={1},
+        codex_cli_cmd="codex",
+        codex_cli_args=[],
+        codex_cli_input_mode="stdin",
+        codex_cli_resume_id="resume",
+        codex_cli_approvals_mode=None,
+        codex_cli_skip_git_check=True,
+        codex_cli_use_pty=False,
+        codex_workdir=".",
+        stream_flush_interval=1.0,
+        stream_include_stderr=False,
+        progress_tick_interval=1.0,
+        run_timeout_seconds=1.0,
+        context_compaction_idle_timeout_seconds=1.0,
+        no_output_idle_timeout_seconds=1.0,
+        final_result_idle_timeout_seconds=1.0,
+        jsonl_sync_interval_seconds=1.0,
+        jsonl_stream_events=False,
+        jsonl_reasoning_throttle_seconds=1.0,
+        jsonl_reasoning_mode="hidden",
+        message_chunk_limit=1000,
+    )
+
+    orchestrator = MultiTickOrchestrator()
+    adapter = telegram_adapter.TelegramAdapter(config, orchestrator)
+    bot = DummyBot()
+    context = DummyContext(bot)
+
+    await adapter._sync_jsonl_tick(context)
+    await adapter._sync_jsonl_tick(context)
     assert bot.sent == [(123, "one"), (123, "two")]
-    assert bot.edited == []
+
+
+@pytest.mark.asyncio
+async def test_jsonl_sender_resets_on_new_conversation_boundary() -> None:
+    class MultiConversationOrchestrator:
+        def __init__(self) -> None:
+            self.poll_calls = 0
+
+        async def is_running(self, user_id: int) -> bool:
+            return False
+
+        async def poll_external_results(self, user_id: int, allow_send: bool):
+            self.poll_calls += 1
+            if self.poll_calls == 1:
+                return [ExternalMessage("one")]
+            if self.poll_calls == 2:
+                return [ExternalMessage("two")]
+            if self.poll_calls == 3:
+                return [ExternalMessage("three")]
+            return []
+
+        def get_last_chat_id(self, user_id: int):
+            return 123
+
+    config = Config(
+        telegram_bot_token="token",
+        telegram_allowed_user_ids={1},
+        codex_cli_cmd="codex",
+        codex_cli_args=[],
+        codex_cli_input_mode="stdin",
+        codex_cli_resume_id="resume",
+        codex_cli_approvals_mode=None,
+        codex_cli_skip_git_check=True,
+        codex_cli_use_pty=False,
+        codex_workdir=".",
+        stream_flush_interval=1.0,
+        stream_include_stderr=False,
+        progress_tick_interval=1.0,
+        run_timeout_seconds=1.0,
+        context_compaction_idle_timeout_seconds=1.0,
+        no_output_idle_timeout_seconds=1.0,
+        final_result_idle_timeout_seconds=1.0,
+        jsonl_sync_interval_seconds=1.0,
+        jsonl_stream_events=False,
+        jsonl_reasoning_throttle_seconds=1.0,
+        jsonl_reasoning_mode="hidden",
+        message_chunk_limit=1000,
+    )
+
+    orchestrator = MultiConversationOrchestrator()
+    adapter = telegram_adapter.TelegramAdapter(config, orchestrator)
+    bot = DummyBot()
+    context = DummyContext(bot)
+
+    # Conversation A: aggregate into one bubble.
+    await adapter._sync_jsonl_tick(context)
+    await adapter._sync_jsonl_tick(context)
+    assert bot.sent == [(123, "one"), (123, "two")]
+
+    # Simulate starting a new conversation (same behavior as _submit_prompt entry).
+    adapter._reset_dedupe(1)
+
+    # Conversation B: should start a fresh bubble, not edit conversation A bubble.
+    await adapter._sync_jsonl_tick(context)
+    assert bot.sent == [(123, "one"), (123, "two"), (123, "three")]
 
 
 @pytest.mark.asyncio

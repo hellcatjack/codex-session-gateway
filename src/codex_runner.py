@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import pty
+import shutil
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -109,6 +110,124 @@ class CodexRunner:
     @staticmethod
     def _codex_home() -> str:
         return os.getenv("CODEX_HOME", os.path.expanduser("~/.codex"))
+
+    def _history_path(self) -> str:
+        return os.path.join(self._codex_home(), "history.jsonl")
+
+    def _append_history_entry(self, session_id: str, text: str) -> None:
+        cleaned = (text or "").strip()
+        if not session_id or not cleaned:
+            return
+        path = self._history_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        entry = {"session_id": session_id, "ts": int(time.time()), "text": cleaned}
+        try:
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except OSError as exc:
+            self._logger.warning("写入 Codex history.jsonl 失败: %s", exc)
+
+    def _find_latest_session_id_for_cwd_since(
+        self,
+        cwd: str,
+        since_epoch_seconds: float,
+        require_source: str | None = None,
+        require_originator: str | None = None,
+    ) -> str | None:
+        sessions_dir = os.path.join(self._codex_home(), "sessions")
+        if not os.path.isdir(sessions_dir):
+            return None
+        cwd_target = os.path.realpath(os.path.normpath(cwd))
+        cwd_prefix = cwd_target if cwd_target.endswith(os.sep) else f"{cwd_target}{os.sep}"
+        best: tuple[float, str] | None = None  # (mtime, session_id)
+        # Slight tolerance in case of coarse mtime resolution.
+        since = max(0.0, since_epoch_seconds - 1.0)
+        for root, _, files in os.walk(sessions_dir):
+            for name in files:
+                if not name.endswith(".jsonl"):
+                    continue
+                path = os.path.join(root, name)
+                try:
+                    mtime = os.path.getmtime(path)
+                except OSError:
+                    continue
+                if mtime < since:
+                    continue
+                try:
+                    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                        line = handle.readline().strip()
+                except OSError:
+                    continue
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if data.get("type") != "session_meta":
+                    continue
+                payload = data.get("payload") or {}
+                session_id = payload.get("id")
+                session_cwd = payload.get("cwd")
+                if not session_id or not session_cwd:
+                    continue
+                session_cwd = os.path.realpath(os.path.normpath(str(session_cwd)))
+                if session_cwd != cwd_target and not session_cwd.startswith(cwd_prefix):
+                    continue
+                if self._is_subagent_session(payload.get("source")):
+                    continue
+                if require_source is not None and payload.get("source") != require_source:
+                    continue
+                if (
+                    require_originator is not None
+                    and payload.get("originator") != require_originator
+                ):
+                    continue
+                if best is None or mtime > best[0]:
+                    best = (mtime, str(session_id))
+        return best[1] if best else None
+
+    def _promote_session_for_cli_resume(self, session_id: str) -> None:
+        path = self._find_session_file(session_id)
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as inp:
+                first = inp.readline()
+                if not first:
+                    return
+                try:
+                    meta = json.loads(first)
+                except json.JSONDecodeError:
+                    return
+                if meta.get("type") != "session_meta":
+                    return
+                payload = meta.get("payload") or {}
+                # Only rewrite exec-created sessions; don't mutate real interactive ones.
+                if payload.get("source") != "exec" and payload.get("originator") != "codex_exec":
+                    return
+                if payload.get("source") == "cli" and payload.get("originator") == "codex_cli_rs":
+                    return
+                payload["originator"] = "codex_cli_rs"
+                payload["source"] = "cli"
+                meta["payload"] = payload
+                rewritten = json.dumps(meta, ensure_ascii=False) + "\n"
+
+                tmp_dir = os.path.dirname(path) or "."
+                fd, tmp_path = tempfile.mkstemp(prefix=".tmp-codex-session-", dir=tmp_dir)
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as out:
+                        out.write(rewritten)
+                        shutil.copyfileobj(inp, out)
+                    os.replace(tmp_path, path)
+                finally:
+                    try:
+                        if os.path.exists(tmp_path):
+                            os.remove(tmp_path)
+                    except OSError:
+                        pass
+        except OSError as exc:
+            self._logger.warning("提升 session_meta 失败 session_id=%s err=%s", session_id, exc)
 
     @classmethod
     def _is_subagent_session(cls, session_source: object) -> bool:
@@ -776,6 +895,16 @@ class CodexRunner:
                 emit_output=lambda message: emit_output(message, False),
                 already_emitted=already_emitted_final,
             )
+            # Make `/new` sessions discoverable by Codex CLI `/resume`.
+            if force_new_session:
+                new_session_id = active_resume_id or self._find_latest_session_id_for_cwd_since(
+                    self._config.codex_workdir,
+                    run_started_at,
+                    require_source="exec",
+                )
+                if new_session_id:
+                    self._promote_session_for_cli_resume(new_session_id)
+                    self._append_history_entry(new_session_id, prompt)
             if forced_done:
                 return 0
             if proc.returncode is None:
