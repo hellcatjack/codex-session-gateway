@@ -1,6 +1,37 @@
+import queue
+
 import pytest
 
 from src.config import AppConfig, BaseConfig, BotConfig
+
+
+def test_adapter_normal_return_causes_gateway_failure():
+    from src import main as main_mod
+
+    exits = queue.Queue()
+    adapter = type("ReturningAdapter", (), {"run": lambda self: None})()
+
+    main_mod._run_adapter("stock", adapter, exits)
+
+    with pytest.raises(RuntimeError, match="stock.*unexpectedly"):
+        main_mod._raise_on_adapter_exit(exits)
+
+
+def test_adapter_exception_causes_gateway_failure():
+    from src import main as main_mod
+
+    exits = queue.Queue()
+    failure = ValueError("telegram startup failed")
+
+    class FailingAdapter:
+        def run(self):
+            raise failure
+
+    main_mod._run_adapter("trader", FailingAdapter(), exits)
+
+    with pytest.raises(RuntimeError, match="trader.*failed") as exc_info:
+        main_mod._raise_on_adapter_exit(exits)
+    assert exc_info.value.__cause__ is failure
 
 
 def test_main_creates_session_manager_per_bot(monkeypatch, tmp_path):
@@ -52,10 +83,11 @@ def test_main_creates_session_manager_per_bot(monkeypatch, tmp_path):
             return None
 
     class FakeThread:
-        def __init__(self, target, name, daemon):
+        def __init__(self, target, name, daemon, args=()):
             self.target = target
             self.name = name
             self.daemon = daemon
+            self.args = args
 
         def start(self):
             return None
@@ -115,6 +147,9 @@ def test_main_creates_session_manager_per_bot(monkeypatch, tmp_path):
     monkeypatch.setattr(main_mod, "TelegramAdapter", FakeAdapter)
     monkeypatch.setattr(main_mod.threading, "Thread", FakeThread)
     monkeypatch.setattr(main_mod.atexit, "register", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        main_mod, "_raise_on_adapter_exit", lambda _exits: None, raising=False
+    )
 
     main_mod.main()
 
