@@ -1,6 +1,7 @@
 [Unit]
 Description=Codex Session Gateway
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
@@ -16,7 +17,7 @@ Environment=XDG_RUNTIME_DIR=/run/user/%U
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%U/bus
 EnvironmentFile=/app/codexTelegramShell/.env
 ExecStart=/app/codexTelegramShell/.venv/bin/python -m src.main
-Restart=on-failure
+Restart=always
 RestartSec=5
 
 # Be explicit: log to journald (which handles rotation/retention).
