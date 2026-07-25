@@ -29,3 +29,10 @@ token = "${ENV:TELEGRAM_BOT_TOKEN_COMFYUI}"
 allowed_user_ids = [123456789]
 # Optional: resume_id (defaults to "auto") to follow latest session under codex_workdir
 codex_workdir = "${ENV:CODEX_WORKDIR_COMFYUI}"
+
+[[bots]]
+name = "trader"
+token = "${ENV:TELEGRAM_BOT_TOKEN_TRADER}"
+allowed_user_ids = [123456789]
+resume_id = "${ENV:CODEX_CLI_RESUME_ID_TRADER}"
+codex_workdir = "${ENV:CODEX_WORKDIR_TRADER}"

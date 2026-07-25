@@ -154,3 +154,25 @@ def test_base_jsonl_settings_support_codex_prefixed_env(tmp_path):
     assert result.app_config.base.jsonl_stream_events is False
     assert result.app_config.base.jsonl_reasoning_throttle_seconds == 1.5
     assert result.app_config.base.jsonl_reasoning_mode == "hidden"
+
+
+def test_example_config_includes_trader_bot():
+    env = {
+        "TELEGRAM_BOT_TOKEN_STOCK": "stock-token",
+        "CODEX_WORKDIR_STOCK": "/tmp/stock",
+        "TELEGRAM_BOT_TOKEN_GATEWAY": "gateway-token",
+        "CODEX_WORKDIR_GATEWAY": "/tmp/gateway",
+        "TELEGRAM_BOT_TOKEN_COMFYUI": "comfy-token",
+        "CODEX_WORKDIR_COMFYUI": "/tmp/comfy",
+        "TELEGRAM_BOT_TOKEN_TRADER": "trader-token",
+        "CODEX_CLI_RESUME_ID_TRADER": "auto",
+        "CODEX_WORKDIR_TRADER": "/tmp/trader",
+    }
+
+    result = load_toml_config("config.toml.example", env)
+
+    assert result.errors == []
+    trader = next(bot for bot in result.app_config.bots if bot.name == "trader")
+    assert trader.token == "trader-token"
+    assert trader.resume_id == "auto"
+    assert trader.codex_workdir == "/tmp/trader"
