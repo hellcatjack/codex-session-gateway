@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import time
 import pytest
 
 from src.adapters import telegram_adapter
 from src.config import Config
 from src.orchestrator import ExternalMessage
+from telegram.error import RetryAfter
 
 
 class DummyApp:
@@ -215,6 +217,67 @@ async def test_jsonl_progress_sent_while_running() -> None:
         (123, "内部推理摘要：planning steps（已隐藏原文，长度14字）"),
         (123, "final result"),
     ]
+    assert bot.edited == []
+
+
+@pytest.mark.asyncio
+async def test_jsonl_progress_keeps_latest_message_only_per_tick() -> None:
+    class ProgressBurstOrchestrator:
+        def __init__(self) -> None:
+            self.running_calls = 0
+
+        async def is_running(self, user_id: int) -> bool:
+            self.running_calls += 1
+            return self.running_calls == 1
+
+        async def poll_external_results(self, user_id: int, allow_send: bool):
+            if self.running_calls == 1:
+                return [
+                    ExternalMessage("step-1", is_progress=True),
+                    ExternalMessage("step-2", is_progress=True),
+                    ExternalMessage("step-3", is_progress=True),
+                ]
+            return [ExternalMessage("final result", is_result=True)]
+
+        def get_last_chat_id(self, user_id: int):
+            return 123
+
+    config = Config(
+        telegram_bot_token="token",
+        telegram_allowed_user_ids={1},
+        codex_cli_cmd="codex",
+        codex_cli_args=[],
+        codex_cli_input_mode="stdin",
+        codex_cli_resume_id="resume",
+        codex_cli_approvals_mode=None,
+        codex_cli_skip_git_check=True,
+        codex_cli_use_pty=False,
+        codex_workdir=".",
+        stream_flush_interval=1.0,
+        stream_include_stderr=False,
+        progress_tick_interval=1.0,
+        run_timeout_seconds=1.0,
+        context_compaction_idle_timeout_seconds=1.0,
+        no_output_idle_timeout_seconds=1.0,
+        final_result_idle_timeout_seconds=1.0,
+        jsonl_sync_interval_seconds=1.0,
+        jsonl_stream_events=False,
+        jsonl_reasoning_throttle_seconds=1.0,
+        jsonl_reasoning_mode="hidden",
+        message_chunk_limit=1000,
+    )
+
+    orchestrator = ProgressBurstOrchestrator()
+    adapter = telegram_adapter.TelegramAdapter(config, orchestrator)
+    bot = DummyBot()
+    context = DummyContext(bot)
+
+    await adapter._sync_jsonl_tick(context)
+    assert bot.sent == [(123, "step-3")]
+    assert bot.edited == []
+
+    await adapter._sync_jsonl_tick(context)
+    assert bot.sent == [(123, "step-3"), (123, "final result")]
     assert bot.edited == []
 
 
@@ -847,3 +910,56 @@ async def test_handle_new_passes_new_prefix_to_runner(monkeypatch) -> None:
 
     await adapter._handle_new(DummyUpdate(1, 123, "/new hello"), context)
     assert captured == ["/new hello"]
+
+
+@pytest.mark.asyncio
+async def test_sync_jsonl_loop_handles_retry_after_and_continues(monkeypatch) -> None:
+    class DummyApplication:
+        pass
+
+    config = Config(
+        telegram_bot_token="token",
+        telegram_allowed_user_ids={1},
+        codex_cli_cmd="codex",
+        codex_cli_args=[],
+        codex_cli_input_mode="stdin",
+        codex_cli_resume_id="resume",
+        codex_cli_approvals_mode=None,
+        codex_cli_skip_git_check=True,
+        codex_cli_use_pty=False,
+        codex_workdir=".",
+        stream_flush_interval=1.0,
+        stream_include_stderr=False,
+        progress_tick_interval=1.0,
+        run_timeout_seconds=1.0,
+        context_compaction_idle_timeout_seconds=1.0,
+        no_output_idle_timeout_seconds=1.0,
+        final_result_idle_timeout_seconds=1.0,
+        jsonl_sync_interval_seconds=1.0,
+        jsonl_stream_events=False,
+        jsonl_reasoning_throttle_seconds=1.0,
+        jsonl_reasoning_mode="hidden",
+        message_chunk_limit=1000,
+    )
+
+    adapter = telegram_adapter.TelegramAdapter(config, DummyOrchestrator())
+    tick_calls = {"count": 0}
+    sleep_calls: list[float] = []
+
+    async def fake_tick(_context) -> None:
+        tick_calls["count"] += 1
+        if tick_calls["count"] == 1:
+            raise RetryAfter(2)
+        if tick_calls["count"] == 2:
+            raise asyncio.CancelledError()
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr(adapter, "_sync_jsonl_tick", fake_tick)
+    monkeypatch.setattr(telegram_adapter.asyncio, "sleep", fake_sleep)
+
+    await adapter._sync_jsonl_loop(DummyApplication())
+
+    assert tick_calls["count"] == 2
+    assert sleep_calls == [2]

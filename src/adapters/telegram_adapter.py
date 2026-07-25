@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from telegram import Update
-from telegram.error import BadRequest
+from telegram.error import BadRequest, RetryAfter
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -446,14 +446,14 @@ class TelegramAdapter:
                 sender = self._get_jsonl_sender(
                     user_ctx, context.bot, user_ctx.chat_id
                 )
-                for message in progress_texts:
-                    if not self._should_send(user_ctx, message):
-                        self._logger.info(
-                            "JSONL 去重：跳过重复进度 user_id=%s bot_id=%s",
-                            user_id,
-                            self._bot_id,
-                        )
-                        continue
+                message = progress_texts[-1]
+                if not self._should_send(user_ctx, message):
+                    self._logger.info(
+                        "JSONL 去重：跳过重复进度 user_id=%s bot_id=%s",
+                        user_id,
+                        self._bot_id,
+                    )
+                else:
                     await sender.send(message, True)
             if running:
                 if final_texts:
@@ -481,9 +481,30 @@ class TelegramAdapter:
     async def _sync_jsonl_loop(self, application: Application) -> None:
         try:
             while True:
-                await self._sync_jsonl_tick(
-                    ContextTypes.DEFAULT_TYPE(application=application)
-                )
-                await asyncio.sleep(self._config.jsonl_sync_interval_seconds)
+                try:
+                    await self._sync_jsonl_tick(
+                        ContextTypes.DEFAULT_TYPE(application=application)
+                    )
+                    await asyncio.sleep(self._config.jsonl_sync_interval_seconds)
+                except asyncio.CancelledError:
+                    raise
+                except RetryAfter as exc:
+                    retry_after = max(
+                        float(getattr(exc, "retry_after", 1.0)),
+                        self._config.jsonl_sync_interval_seconds,
+                    )
+                    self._logger.warning(
+                        "JSONL 同步触发 Telegram 限流 bot_id=%s retry_after=%.3f",
+                        self._bot_id,
+                        retry_after,
+                    )
+                    await asyncio.sleep(retry_after)
+                except Exception as exc:
+                    self._logger.warning(
+                        "JSONL 同步任务异常 bot_id=%s err=%s",
+                        self._bot_id,
+                        exc,
+                    )
+                    await asyncio.sleep(self._config.jsonl_sync_interval_seconds)
         except asyncio.CancelledError:
             return
